@@ -1,1 +1,5 @@
 com\taskmanager\service\TestServiceTest.class
+com\taskmanager\repository\TaskRepositoryTest.class
+com\taskmanager\repository\PersistenceBehaviorTest.class
+com\taskmanager\repository\UserRepositoryTest.class
+com\taskmanager\service\TaskServiceTest.class

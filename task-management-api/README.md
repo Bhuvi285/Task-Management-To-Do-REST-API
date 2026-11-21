@@ -6,6 +6,8 @@ Phase 1 is a minimal Spring Boot application for learning IoC, dependency inject
 
 - Java 21
 - Spring Boot 3.5.x
+- Spring Data JPA and Hibernate
+- H2 in-memory database
 - Maven
 - Embedded Apache Tomcat
 - JUnit 5
@@ -18,6 +20,9 @@ Phase 1 is a minimal Spring Boot application for learning IoC, dependency inject
 - Use constructor-based dependency injection
 - Understand the default singleton bean scope
 - Understand the Spring MVC HTTP request lifecycle
+- Understand JDBC, JPA, Hibernate, and Spring Data JPA
+- Map entities and a Many-to-One User-Task relationship
+- Demonstrate repositories, persistence context, and dirty checking
 
 ## Folder structure
 

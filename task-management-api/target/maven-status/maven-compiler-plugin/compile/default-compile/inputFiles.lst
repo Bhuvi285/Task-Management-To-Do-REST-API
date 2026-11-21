@@ -1,3 +1,9 @@
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\controller\TestController.java
+D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\entity\Task.java
+D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\entity\User.java
+D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\enums\TaskStatus.java
+D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\repository\TaskRepository.java
+D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\repository\UserRepository.java
+D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\service\TaskService.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\service\TestService.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\TaskManagementApplication.java

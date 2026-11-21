@@ -1,3 +1,9 @@
-com\taskmanager\controller\TestController.class
+com\taskmanager\entity\User.class
+com\taskmanager\repository\TaskRepository.class
+com\taskmanager\entity\Task.class
+com\taskmanager\repository\UserRepository.class
+com\taskmanager\enums\TaskStatus.class
 com\taskmanager\service\TestService.class
+com\taskmanager\service\TaskService.class
+com\taskmanager\controller\TestController.class
 com\taskmanager\TaskManagementApplication.class
