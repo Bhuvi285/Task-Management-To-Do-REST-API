@@ -1,0 +1,3 @@
+com\taskmanager\controller\TestController.class
+com\taskmanager\service\TestService.class
+com\taskmanager\TaskManagementApplication.class
