@@ -11,6 +11,7 @@ com\taskmanager\security\PasswordResetTokenDelivery.class
 com\taskmanager\security\TaskManagerUserDetailsService.class
 com\taskmanager\dto\auth\ResetPasswordRequest.class
 com\taskmanager\exception\InvalidRefreshTokenException.class
+com\taskmanager\config\OAuth2ClientProperties.class
 com\taskmanager\repository\RefreshTokenRepository.class
 com\taskmanager\enums\TaskStatus.class
 com\taskmanager\service\RefreshTokenLifecycleService$RotationStatus.class
@@ -31,6 +32,7 @@ com\taskmanager\exception\DuplicateEmailException.class
 com\taskmanager\exception\RestAccessDeniedHandler.class
 com\taskmanager\service\RefreshTokenGenerator.class
 com\taskmanager\dto\auth\ForgotPasswordRequest.class
+com\taskmanager\config\OAuth2ClientProperties$Provider.class
 com\taskmanager\exception\InvalidPasswordResetTokenException.class
 com\taskmanager\exception\RegistrationExceptionHandler.class
 com\taskmanager\dto\auth\ChangePasswordRequest.class
@@ -42,6 +44,7 @@ com\taskmanager\dto\auth\AuthMessageResponse.class
 com\taskmanager\config\PasswordConfig.class
 com\taskmanager\config\AuthSecurityProperties.class
 com\taskmanager\config\JwtConfiguration.class
+com\taskmanager\config\OAuth2ClientConfiguration.class
 com\taskmanager\entity\PasswordResetToken.class
 com\taskmanager\entity\User.class
 com\taskmanager\validation\MaxUtf8ByteLengthValidator.class

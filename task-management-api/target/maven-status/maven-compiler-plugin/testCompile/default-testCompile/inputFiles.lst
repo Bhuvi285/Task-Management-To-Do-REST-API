@@ -1,6 +1,8 @@
+D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\test\java\com\taskmanager\config\OAuth2ClientConfigurationTest.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\test\java\com\taskmanager\config\SecurityConfigTest.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\test\java\com\taskmanager\controller\AuthControllerIntegrationTest.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\test\java\com\taskmanager\controller\AuthHardeningIntegrationTest.java
+D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\test\java\com\taskmanager\controller\OAuth2AuthorizationFlowTest.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\test\java\com\taskmanager\repository\PersistenceBehaviorTest.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\test\java\com\taskmanager\repository\TaskRepositoryTest.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\test\java\com\taskmanager\repository\UserRepositoryTest.java

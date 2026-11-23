@@ -7626,3 +7626,1057 @@ Account throttling applies to submitted identifiers without consulting account e
 Regression tests cover missing, invalid, and short JWT secrets; account-limit suppression with generic responses; no extra token row or delivery after suppression; independent IP 429 behavior; fixed limiter capacity, expiry, blocked-state retention, churn, new-client handling, and concurrent calls; and the existing authentication, refresh-token, logout, and reset-token flows.
 
 These controls improve the existing single-instance application but do not make it production-ready by themselves. Production still needs secret-manager operations and rotation, schema migrations, a durable email delivery mechanism, and shared rate-limit state where multiple instances are deployed.
+
+
+---------------------------------------------------------------------
+
+# Phase 4.1 — OAuth2 Foundation and Architecture
+
+## 1. Introduction to OAuth2
+
+OAuth2 (Open Authorization 2.0) is an authorization framework that allows an application to access resources or establish a login flow through an external identity provider without directly collecting the user's provider password.
+
+In our Task Management REST API, we want users to authenticate using:
+
+- Google
+- GitHub
+- Existing email and password authentication
+
+Instead of implementing authentication independently for each provider, we will integrate Google and GitHub through Spring Security OAuth2 Client.
+
+### Why OAuth2?
+
+Consider traditional authentication:
+
+1. User enters email and password.
+2. Backend validates the credentials.
+3. Backend generates JWT access and refresh tokens.
+
+With social authentication:
+
+1. User selects Login with Google or GitHub.
+2. The backend redirects the user to the provider.
+3. The provider authenticates the user.
+4. The provider sends the user back to our application.
+5. Our backend validates the provider's response.
+6. Our backend identifies or creates a local user.
+7. Our backend generates its own JWT access and refresh tokens.
+
+**Important:** Google and GitHub authenticate the user, but our application remains responsible for its own authorization and API authentication.
+
+---
+
+## 2. OAuth2 vs OpenID Connect (OIDC)
+
+These two concepts are related but not identical.
+
+### OAuth2
+
+OAuth2 primarily handles delegated authorization.
+
+It allows an application to obtain permission to access resources on behalf of a user.
+
+Example:
+
+A user authorizes an application to access their GitHub profile.
+
+### OpenID Connect
+
+OIDC is an identity layer built on top of OAuth2.
+
+It provides standardized information about the authenticated user.
+
+For example:
+
+- User identifier
+- Email
+- Email verification status
+- Name
+- Profile information
+
+Google supports OpenID Connect.
+
+GitHub login through Spring Security generally uses OAuth2 user information rather than an OIDC ID token.
+
+| Feature | OAuth2 | OpenID Connect |
+|---|---|---|
+| Primary purpose | Authorization | Authentication and identity |
+| Access token | Yes | Yes |
+| ID token | Not inherently | Yes |
+| User identity standard | Not inherently | Yes |
+| Example | GitHub OAuth login | Google OIDC login |
+
+**Remember:** An OAuth2 access token should not automatically be treated as proof of user identity. Identity must be established using the provider's appropriate authentication mechanism.
+
+---
+
+## 3. OAuth2 Authorization Code Flow
+
+We plan to use the Authorization Code Flow.
+
+This is the standard browser-based authorization flow for our application.
+
+### Complete flow
+
+```text
+User Browser
+    |
+    | 1. Click Login with Google
+    v
+Our Spring Boot Application
+    |
+    | 2. Generate authorization request
+    |    Generate random state
+    v
+Google Authorization Server
+    |
+    | 3. User authenticates
+    | 4. User grants requested permissions
+    v
+Google redirects browser to callback
+    |
+    | 5. Authorization code + state
+    v
+Our Spring Boot Application
+    |
+    | 6. Validate state
+    | 7. Exchange authorization code
+    v
+Google Token Endpoint
+    |
+    | 8. Access token / ID token
+    v
+Our Application
+    |
+    | 9. Validate identity and load profile
+    | 10. Resolve local user
+    v
+Local Database
+    |
+    | 11. Generate application JWT
+    | 12. Generate refresh token
+    v
+Browser receives authentication response
+```
+
+### Step-by-step explanation
+
+**Step 1: Authorization request**
+
+The browser starts the OAuth2 login process.
+
+For example:
+
+```text
+/oauth2/authorization/google
+```
+
+Spring Security identifies the Google registration and constructs an authorization request.
+
+**Step 2: State generation**
+
+A random state value is generated.
+
+It helps protect against Cross-Site Request Forgery (CSRF) attacks during the OAuth2 authorization flow.
+
+**Step 3: Provider authentication**
+
+The browser is redirected to Google's authentication page.
+
+The user signs in and approves the requested permissions.
+
+**Step 4: Authorization callback**
+
+Google redirects the browser to:
+
+```text
+/login/oauth2/code/google
+```
+
+The callback contains an authorization code and state.
+
+**Step 5: State validation**
+
+Spring Security compares the returned state with the original authorization request.
+
+If the state does not match, the authentication process must fail.
+
+**Step 6: Authorization code exchange**
+
+The backend exchanges the authorization code for tokens through the provider's token endpoint.
+
+**Step 7: User information retrieval**
+
+The backend obtains the authenticated user's identity information.
+
+**Step 8: Local authentication**
+
+Our application resolves the provider identity to a local user and issues its own tokens.
+
+---
+
+## 4. OAuth2 Client in Spring Security
+
+Spring Security provides OAuth2 Client support through:
+
+```xml
+spring-boot-starter-oauth2-client
+```
+
+This starter provides the infrastructure required for OAuth2 login.
+
+Important Spring Security components:
+
+| Component | Responsibility |
+|---|---|
+| ClientRegistration | Stores provider configuration |
+| ClientRegistrationRepository | Provides configured client registrations |
+| OAuth2AuthorizationRequest | Represents an authorization request |
+| OAuth2UserService | Loads OAuth2 user information |
+| OidcUserService | Loads OIDC user information |
+| OAuth2AuthenticationToken | Represents OAuth2 authentication |
+| OAuth2LoginAuthenticationFilter | Processes OAuth2 login callbacks |
+| AuthenticationSuccessHandler | Handles successful authentication |
+| AuthenticationFailureHandler | Handles failed authentication |
+
+### ClientRegistration
+
+A ClientRegistration represents one OAuth2 provider configuration.
+
+For example:
+
+- Google registration
+- GitHub registration
+
+It includes:
+
+- Client ID
+- Client secret
+- Authorization URI
+- Token URI
+- User information endpoint
+- Redirect URI
+- Requested scopes
+- Client authentication method
+
+### Registration ID
+
+We will use:
+
+```text
+google
+github
+```
+
+Spring Security uses these registration IDs in authorization and callback URLs.
+
+---
+
+## 5. OAuth2 Configuration and Environment Variables
+
+OAuth2 providers require application credentials.
+
+These credentials are created when registering our application with Google and GitHub.
+
+They include:
+
+- Client ID
+- Client Secret
+
+These are different from our JWT signing secret.
+
+| Credential | Purpose |
+|---|---|
+| Google Client ID | Identifies our application to Google |
+| Google Client Secret | Authenticates our application to Google |
+| GitHub Client ID | Identifies our application to GitHub |
+| GitHub Client Secret | Authenticates our application to GitHub |
+| JWT Secret | Signs our application's JWT access tokens |
+
+Example environment variables:
+
+```properties
+GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+
+GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+```
+
+The actual provider configuration will be externalized into Spring configuration.
+
+**Security rules:**
+
+- Never commit actual client secrets.
+- Never print secrets in application logs.
+- Use different credentials for development and production.
+- Use HTTPS redirect URIs in production.
+- Do not use production credentials in automated tests.
+
+Provider enablement should be configurable so that local email/password authentication can continue working when social login is not configured.
+
+---
+
+## 6. Google OAuth2 and OIDC
+
+Google supports OpenID Connect.
+
+We can request scopes such as:
+
+```text
+openid
+email
+profile
+```
+
+These provide access to identity information.
+
+Important Google identity claims:
+
+| Claim | Meaning |
+|---|---|
+| sub | Stable Google account identifier |
+| email | User email address |
+| email_verified | Whether Google verifies the email |
+| name | User's display name |
+| picture | Profile picture URL |
+
+### Why is `sub` important?
+
+Suppose a Google user has:
+
+```json
+{
+  "sub": "109876543210987654321",
+  "email": "user@example.com",
+  "email_verified": true,
+  "name": "Example User"
+}
+```
+
+The `sub` value is the provider's stable account identifier.
+
+We should identify the social account using:
+
+```text
+provider = google
+providerUserId = sub
+```
+
+Do not use email as the primary social identity key.
+
+Email addresses can change. The provider's stable account identifier is a better identity reference.
+
+### Email verification
+
+Only accept an email as verified when the provider's trusted identity response indicates:
+
+```text
+email_verified = true
+```
+
+Do not assume every email returned by an OAuth2 provider is verified.
+
+---
+
+## 7. GitHub OAuth2
+
+GitHub uses OAuth2 user information.
+
+We can request scopes such as:
+
+```text
+read:user
+user:email
+```
+
+These permissions allow the application to retrieve profile information and email information.
+
+Important GitHub fields:
+
+| Field | Meaning |
+|---|---|
+| id | Stable numeric GitHub account identifier |
+| login | GitHub username |
+| name | Display name |
+| email | Public profile email, possibly null |
+| avatar_url | Profile picture |
+
+### Why can GitHub email be null?
+
+A GitHub user can keep their email address private.
+
+Therefore, the normal profile endpoint may return:
+
+```json
+{
+  "id": 12345678,
+  "login": "example-user",
+  "email": null
+}
+```
+
+The application may need to use GitHub's email endpoint with the appropriate scope.
+
+The verified primary email should be selected from the returned email records.
+
+Example:
+
+```json
+[
+  {
+    "email": "user@example.com",
+    "primary": true,
+    "verified": true
+  }
+]
+```
+
+We should not use an unverified email for account provisioning.
+
+### GitHub identity
+
+Use:
+
+```text
+provider = github
+providerUserId = GitHub numeric id
+```
+
+Do not use the GitHub username as the permanent identity key.
+
+---
+
+## 8. OAuthAccount Entity
+
+Our existing application has a `User` entity.
+
+However, one local user may eventually authenticate through multiple identity providers.
+
+For example:
+
+```text
+Local User
+   |
+   |---- Google Account
+   |
+   |---- GitHub Account
+```
+
+We should not put all provider-specific fields directly inside the User entity.
+
+Instead, we propose a separate OAuthAccount entity.
+
+### Proposed relationship
+
+```text
+             USER
+              |
+              | 1
+              |
+              | Many
+          OAUTH_ACCOUNT
+              |
+              |-------------------
+              |                  |
+          Google Account    GitHub Account
+```
+
+### Proposed fields
+
+| Field | Purpose |
+|---|---|
+| id | Primary key |
+| user_id | Reference to local User |
+| provider | GOOGLE or GITHUB |
+| provider_user_id | Stable provider account ID |
+| created_at | Account linking/creation time |
+
+### Unique constraint
+
+The database should enforce:
+
+```text
+UNIQUE(provider, provider_user_id)
+```
+
+This ensures that one provider identity cannot be associated with multiple local users.
+
+An additional index on `user_id` supports retrieving all linked provider accounts for a local user.
+
+### Why separate OAuthAccount from User?
+
+Because the local user represents the application account, while OAuthAccount represents an external identity associated with that account.
+
+This design also supports adding more providers in the future without continually changing the User entity.
+
+---
+
+## 9. Social Account Provisioning
+
+When a user authenticates through Google or GitHub for the first time, our application needs to determine whether the provider identity already exists.
+
+### Existing provider identity
+
+```text
+Google identity
+      |
+      v
+Search OAuthAccount by provider + providerUserId
+      |
+      v
+Identity found
+      |
+      v
+Load associated local User
+      |
+      v
+Check account enabled status
+      |
+      v
+Issue application JWT and refresh token
+```
+
+### New provider identity
+
+```text
+Google identity
+      |
+      v
+Search OAuthAccount
+      |
+      v
+Identity not found
+      |
+      v
+Validate provider email
+      |
+      v
+Check local account conflicts
+      |
+      v
+Create local User
+      |
+      v
+Create OAuthAccount
+      |
+      v
+Issue application JWT and refresh token
+```
+
+### Important account-linking rule
+
+Never silently link an OAuth identity to an existing local account simply because the email addresses match.
+
+A secure account-linking workflow should require:
+
+- An already authenticated local user.
+- Explicit user consent.
+- Reauthentication where appropriate.
+- Validation of the new provider identity.
+- Protection against CSRF and identity substitution.
+
+Account linking is different from first-time social account provisioning.
+
+---
+
+## 10. Handling OAuth-only users
+
+Our existing User entity requires a non-null password hash.
+
+An OAuth-only account does not have a password supplied to our application.
+
+There are two possible designs:
+
+**Option A: Unusable placeholder password hash**
+
+Generate a high-entropy random value and store only its BCrypt hash.
+
+The plaintext must never be exposed or logged.
+
+This allows us to preserve the existing non-null database constraint, but we must ensure the account cannot use an assumed password.
+
+**Option B: Nullable password hash**
+
+Allow password_hash to be null for OAuth-only users.
+
+This requires schema and validation changes.
+
+Local password authentication must explicitly reject accounts without a password hash.
+
+For the initial implementation, Option A is the less disruptive option, provided it is implemented carefully.
+
+---
+
+## 11. Refresh Token and JWT Integration
+
+This is the most important architectural decision in Phase 4.
+
+Our application already implements:
+
+- JwtService
+- RefreshTokenGenerator
+- RefreshTokenLifecycleService
+- LoginResponse
+
+We should reuse these components.
+
+We must not generate provider-specific JWTs.
+
+### Local authentication
+
+```text
+Email + Password
+      |
+      v
+AuthenticationManager
+      |
+      v
+AuthService
+      |
+      v
+RefreshTokenLifecycleService
+      |
+      v
+JWT + Refresh Token
+```
+
+### Social authentication
+
+```text
+Google / GitHub
+      |
+      v
+Spring Security OAuth2
+      |
+      v
+OAuth Identity Service
+      |
+      v
+Local User
+      |
+      v
+RefreshTokenLifecycleService
+      |
+      v
+JWT + Refresh Token
+```
+
+Both flows should eventually produce the same response.
+
+Example:
+
+```json
+{
+  "accessToken": "application-jwt",
+  "refreshToken": "opaque-refresh-token",
+  "tokenType": "Bearer",
+  "expiresIn": 900
+}
+```
+
+The example values are illustrative, not real credentials.
+
+### Why is this architecture better?
+
+Because our APIs do not need to know whether the user logged in through:
+
+- Email/password
+- Google
+- GitHub
+
+They only need to validate our application's JWT.
+
+This keeps authentication provider details separate from API authorization.
+
+---
+
+## 12. OAuth2 Success Handler
+
+Spring Security provides an authentication success handler that runs after successful OAuth2 login.
+
+We propose a custom handler.
+
+Its responsibility will be:
+
+1. Obtain the authenticated OAuth2 identity.
+2. Resolve the corresponding local user.
+3. Verify the local account is enabled.
+4. Call the existing RefreshTokenLifecycleService.
+5. Return the existing LoginResponse structure.
+6. Set `Cache-Control: no-store`.
+7. Avoid putting tokens into URLs.
+
+Conceptually:
+
+```text
+OAuth2AuthenticationSuccessHandler
+          |
+          v
+OAuth Identity Service
+          |
+          v
+Local User
+          |
+          v
+RefreshTokenLifecycleService
+          |
+          v
+LoginResponse
+```
+
+### Authentication failure handler
+
+A custom failure handler should:
+
+- Return a generic failure response.
+- Avoid exposing provider access tokens.
+- Avoid returning raw provider attributes.
+- Avoid revealing whether an account exists.
+- Avoid logging secrets or authorization codes.
+
+---
+
+## 13. Stateless Authentication vs OAuth2 Temporary State
+
+Our current API uses:
+
+```java
+SessionCreationPolicy.STATELESS
+```
+
+This means normal API authentication does not depend on a server-side HTTP session.
+
+However, OAuth2 Authorization Code Flow requires temporary state between the authorization request and callback.
+
+This is an important distinction.
+
+### Normal API requests
+
+```text
+HTTP Request
+     |
+     v
+Bearer JWT
+     |
+     v
+JwtAuthenticationFilter
+     |
+     v
+SecurityContext
+```
+
+The API uses JWT authentication.
+
+### OAuth2 browser handshake
+
+```text
+Browser
+   |
+   v
+OAuth2 Authorization Request
+   |
+   v
+Temporary authorization request storage
+   |
+   v
+Provider redirect
+   |
+   v
+OAuth2 callback
+   |
+   v
+Validate state
+```
+
+Spring Security can use:
+
+```java
+HttpSessionOAuth2AuthorizationRequestRepository
+```
+
+to preserve the temporary authorization request.
+
+The temporary OAuth2 state is not the same thing as maintaining a permanent authenticated application session.
+
+### Important cookie settings
+
+For the temporary handshake cookie/session:
+
+- HttpOnly should be enabled.
+- Secure should be enabled under HTTPS.
+- SameSite should be configured appropriately, commonly Lax for a top-level GET callback.
+- Expiry should be limited.
+- Temporary state should be cleaned up after the handshake.
+
+The exact implementation must be tested with the actual browser redirect flow.
+
+---
+
+## 14. OAuth2 Security Considerations
+
+Important security requirements:
+
+### State validation
+
+The returned state must match the original authorization request.
+
+This protects the OAuth2 callback against CSRF.
+
+### OIDC nonce
+
+For Google OIDC, nonce validation helps bind the ID token to the original authentication request and prevents replay.
+
+### Redirect URI validation
+
+The redirect URI must match the registered provider configuration.
+
+Use HTTPS in production.
+
+### Client secret protection
+
+Never expose provider client secrets to a browser or frontend.
+
+### Access-token protection
+
+Do not log provider access tokens.
+
+Do not return provider tokens to the frontend unless there is a separately justified requirement.
+
+### Local account enabled status
+
+An existing disabled local account must not receive application tokens through OAuth2.
+
+### Account linking
+
+Never automatically attach an external identity using email alone.
+
+### Token delivery
+
+Never place application access or refresh tokens in:
+
+- URL query parameters
+- URL fragments
+- Browser history
+- Logs
+
+Use an appropriately secured token-response or browser handoff design.
+
+---
+
+## 15. Testing Strategy
+
+OAuth2 integration must be testable without depending on real Google or GitHub credentials.
+
+### Provider identity tests
+
+Google:
+
+- Valid subject and verified email.
+- Missing subject.
+- Unverified email.
+- Missing email.
+
+GitHub:
+
+- Stable numeric ID.
+- Null public email.
+- Verified primary email available.
+- No verified primary email.
+
+### Social account tests
+
+- Existing Google identity.
+- Existing GitHub identity.
+- New social identity.
+- Existing email conflict.
+- Disabled local account.
+- Duplicate provider identity.
+- Concurrent first-time login.
+
+### OAuth2 security tests
+
+- Authorization initiation.
+- Valid state.
+- Invalid state.
+- Missing state.
+- Failed token exchange.
+- Generic authentication failure.
+
+### JWT integration tests
+
+- Successful Google login produces application JWT.
+- Successful GitHub login produces application JWT.
+- Refresh tokens are stored hashed.
+- Existing refresh-token rotation works.
+- Disabled accounts cannot receive tokens.
+- Both providers return the same LoginResponse structure.
+
+---
+
+## 16. Proposed Phase 4 Implementation Structure
+
+The proposed structure is:
+
+```text
+com.taskmanager
+|
+|-- config
+|   |-- SecurityConfig.java
+|   |-- OAuth2ClientConfig.java
+|   |-- OAuth2Properties.java
+|
+|-- controller
+|   |-- AuthController.java
+|
+|-- entity
+|   |-- User.java
+|   |-- OAuthAccount.java
+|
+|-- repository
+|   |-- UserRepository.java
+|   |-- OAuthAccountRepository.java
+|
+|-- security
+|   |-- JwtAuthenticationFilter.java
+|   |-- OAuth2AuthenticationSuccessHandler.java
+|   |-- OAuth2AuthenticationFailureHandler.java
+|
+|-- service
+|   |-- AuthService.java
+|   |-- JwtService.java
+|   |-- RefreshTokenLifecycleService.java
+|   |-- OAuth2UserProvisioningService.java
+|
+|-- dto
+|   |-- auth
+|       |-- LoginResponse.java
+|
+```
+
+This is a proposed structure. Actual package names may be adjusted to match the existing codebase.
+
+---
+
+## 17. Important Interview Questions
+
+**Q1. What is OAuth2?**
+
+OAuth2 is an authorization framework that allows applications to access protected resources through delegated authorization.
+
+**Q2. What is OpenID Connect?**
+
+OIDC is an identity layer built on OAuth2 that provides standardized user authentication and identity claims.
+
+**Q3. What is Authorization Code Flow?**
+
+It is a flow where the application receives a short-lived authorization code and exchanges it for tokens through the provider's token endpoint.
+
+**Q4. What is the state parameter?**
+
+It is a random value used to correlate the authorization request and callback and protect against CSRF.
+
+**Q5. Why should we not use email as the social account's primary identifier?**
+
+Email addresses can change. Stable provider-specific identifiers such as Google's `sub` and GitHub's numeric ID are better identity keys.
+
+**Q6. What is an OAuth2 Success Handler?**
+
+It is a Spring Security component that handles the application-specific behavior after successful OAuth2 authentication.
+
+**Q7. Why reuse our existing JwtService?**
+
+It ensures that all authentication methods produce tokens accepted by the same application security infrastructure.
+
+**Q8. Is JWT authentication stateless while OAuth2 login uses a session?**
+
+They serve different purposes. JWT handles normal API authentication without a persistent server-side session, while OAuth2 may require temporary authorization-request storage during the browser handshake.
+
+**Q9. What is the difference between access token and refresh token?**
+
+An access token authenticates API requests. A refresh token is used to obtain a new access-token pair and is typically stored and rotated by the backend.
+
+**Q10. Why must account linking be explicit?**
+
+Automatically linking accounts based only on email can attach an external identity to an account without sufficient proof of ownership or user consent.
+
+---
+
+## 18. Phase 4.1 Learning Summary
+
+At the end of the architecture-inspection milestone, the key concepts to understand are:
+
+- OAuth2 fundamentals.
+- OAuth2 vs OIDC.
+- Authorization Code Flow.
+- Authorization request and callback.
+- State validation.
+- OIDC nonce.
+- Spring Security OAuth2 Client.
+- ClientRegistration.
+- OAuth2UserService and OidcUserService.
+- Google OIDC identity.
+- GitHub OAuth2 identity.
+- Provider-specific stable user IDs.
+- Verified email handling.
+- OAuthAccount entity and relationship.
+- Social user provisioning.
+- Account linking.
+- OAuth2 success and failure handlers.
+- Stateless JWT authentication.
+- Temporary OAuth2 authorization state.
+- Refresh-token lifecycle reuse.
+- OAuth2 testing with mocked providers.
+
+**Implementation status:** These notes describe the proposed Phase 4 architecture and learning objectives. They do not mean Google/GitHub OAuth2 has already been implemented. Update this section as each implementation milestone is completed and verified.
+
+---
+
+**End of Phase 4.1 — OAuth2 Foundation and Architecture**
+
+# Phase 4.2 — OAuth2 Dependencies and Provider Configuration
+
+## Spring Security OAuth2 Client
+
+The project now includes `spring-boot-starter-oauth2-client`, managed by the existing Spring Boot dependency management. Spring Security OAuth2 Client provides the authorization-code login filters and client registration model; it does not provision local users or issue this application's JWTs in this phase.
+
+A `ClientRegistration` describes one OAuth client: its registration ID, client ID and secret, scopes, provider endpoints, and callback URI. `OAuth2ClientConfiguration` exposes a `ClientRegistrationRepository` containing only enabled registrations. If both providers are disabled, the repository is still available but contains no registrations, so OAuth endpoints cannot start a provider flow and ordinary local authentication remains available.
+
+## Provider registrations and scopes
+
+The Google registration uses Spring Security's built-in Google provider configuration with OIDC scopes `openid`, `profile`, and `email`. `openid` selects the OIDC flow and enables Spring's OIDC processing. The callback template defaults to `{baseUrl}/login/oauth2/code/google`.
+
+The GitHub registration uses Spring Security's built-in GitHub endpoint configuration and requests `read:user` and `user:email`. Its callback template defaults to `{baseUrl}/login/oauth2/code/github`.
+
+`{baseUrl}` is resolved by Spring for the request that starts authorization. Exact redirect URI values can be overridden with `GOOGLE_REDIRECT_URI` and `GITHUB_REDIRECT_URI`; wildcard redirect values are rejected. Development defaults to explicit localhost callback URLs, while production defaults to the request-derived `{baseUrl}` pattern, and either profile can override these settings.
+
+## Client credentials and provider enablement
+
+No client credential is committed. Development and production read:
+
+```text
+GOOGLE_OAUTH2_ENABLED
+GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET
+GITHUB_OAUTH2_ENABLED
+GITHUB_CLIENT_ID
+GITHUB_CLIENT_SECRET
+```
+
+Each provider is disabled by default. Missing credentials for a disabled provider do not prevent application startup. Enabling a provider without both a client ID and secret fails configuration clearly; the secret is not written to logs. Test properties explicitly disable providers, and OAuth tests use dummy credentials only in test code.
+
+## Authorization request storage and state
+
+Starting `/oauth2/authorization/google` or `/oauth2/authorization/github` creates an authorization request containing a random `state` value and redirects the browser to the configured provider. Spring stores that request in `HttpSessionOAuth2AuthorizationRequestRepository`. On callback to `/login/oauth2/code/{registrationId}`, Spring compares the returned state to the saved request before processing the authorization code. State validation remains enabled.
+
+The API still configures `SessionCreationPolicy.STATELESS`: its JWT security context is not intended to become a persistent authenticated server-side session. OAuth authorization is a short browser round trip and needs temporary request state despite stateless API authentication. The existing global CSRF configuration remains unchanged; OAuth `state` validation is not disabled or replaced by CSRF configuration.
+
+## Testing and milestone boundary
+
+Configuration tests verify that disabled providers need no credentials, enabled Google and GitHub registrations have the expected scopes and callback endpoints, and enabled providers fail when credentials are missing. A MockMvc test starts Google authorization, checks the redirect and non-empty state, and verifies Spring saved the matching request in the temporary session. Tests do not call either provider or require real credentials; existing local-authentication integration tests remain in the suite.
+
+This phase does **not** create OAuth-linked local users, an `OAuthAccount` table, account-linking behavior, GitHub verified-email retrieval, or an OAuth success handler that issues application access/refresh tokens. Spring's authorization infrastructure only is configured; the existing local login and JWT issuance path is unchanged. Those behaviors require later milestones.
+
+**Interview question:** Why is a temporary HTTP session compatible with a stateless API?
+
+**Answer:** the session stores only the short-lived authorization request needed to bind a callback to its initiating browser and validate `state`. It is distinct from persisting the API's authenticated security context, which continues to use JWTs.

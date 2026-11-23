@@ -10,6 +10,7 @@ com\taskmanager\service\RefreshTokenGeneratorTest.class
 com\taskmanager\service\PasswordResetRateLimiterTest$MutableClock.class
 com\taskmanager\controller\AuthHardeningIntegrationTest.class
 com\taskmanager\repository\UserRepositoryTest.class
+com\taskmanager\config\OAuth2ClientConfigurationTest.class
 com\taskmanager\service\JwtServiceTest.class
 com\taskmanager\service\TestServiceTest.class
 com\taskmanager\controller\AuthControllerIntegrationTest.class
@@ -18,3 +19,4 @@ com\taskmanager\controller\AuthHardeningIntegrationTest$SecurityProbe.class
 com\taskmanager\controller\AuthControllerIntegrationTest$ProtectedTestEndpoint.class
 com\taskmanager\controller\AuthControllerIntegrationTest$ProtectedEndpointConfiguration.class
 com\taskmanager\service\AuthServiceTest.class
+com\taskmanager\controller\OAuth2AuthorizationFlowTest.class
