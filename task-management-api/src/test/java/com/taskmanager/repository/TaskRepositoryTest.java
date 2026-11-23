@@ -6,6 +6,7 @@ import com.taskmanager.enums.TaskStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -15,6 +16,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DataJpaTest
 class TaskRepositoryTest {
 
+    private static final BCryptPasswordEncoder PASSWORD_ENCODER = new BCryptPasswordEncoder();
+
     @Autowired
     private UserRepository userRepository;
 
@@ -23,7 +26,7 @@ class TaskRepositoryTest {
 
     @Test
     void shouldSaveAndRetrieveTaskWithUserRelationship() {
-        User user = userRepository.save(new User("Alice", "alice@example.com"));
+        User user = userRepository.save(newUser("Alice", "alice@example.com"));
         Task task = new Task(
             "Design database",
             "Create the JPA entity mappings",
@@ -42,7 +45,7 @@ class TaskRepositoryTest {
 
     @Test
     void shouldFindTasksByStatusAndUserId() {
-        User user = userRepository.save(new User("Bob", "bob@example.com"));
+        User user = userRepository.save(newUser("Bob", "bob@example.com"));
         taskRepository.save(new Task(
             "Pending task",
             "Must be completed",
@@ -68,7 +71,7 @@ class TaskRepositoryTest {
 
     @Test
     void shouldFindTasksByTitleIgnoringCase() {
-        User user = userRepository.save(new User("Carol", "carol@example.com"));
+        User user = userRepository.save(newUser("Carol", "carol@example.com"));
         taskRepository.save(new Task(
             "Prepare Architecture",
             "Document persistence",
@@ -81,5 +84,9 @@ class TaskRepositoryTest {
 
         assertThat(matches).hasSize(1);
         assertThat(matches.getFirst().getTitle()).isEqualTo("Prepare Architecture");
+    }
+
+    private User newUser(String name, String email) {
+        return new User(name, email, PASSWORD_ENCODER.encode("test-password"));
     }
 }

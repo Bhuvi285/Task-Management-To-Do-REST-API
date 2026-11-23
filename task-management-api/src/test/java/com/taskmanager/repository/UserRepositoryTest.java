@@ -4,6 +4,7 @@ import com.taskmanager.entity.User;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.Optional;
@@ -14,12 +15,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DataJpaTest
 class UserRepositoryTest {
 
+    private static final BCryptPasswordEncoder PASSWORD_ENCODER = new BCryptPasswordEncoder();
+
     @Autowired
     private UserRepository userRepository;
 
     @Test
     void shouldSaveAndRetrieveUserById() {
-        User user = new User("Alice", "alice@example.com");
+        User user = newUser("Alice", "alice@example.com");
 
         User savedUser = userRepository.save(user);
         Optional<User> retrievedUser = userRepository.findById(savedUser.getId());
@@ -32,7 +35,7 @@ class UserRepositoryTest {
 
     @Test
     void shouldFindUserByEmail() {
-        userRepository.save(new User("Bob", "bob@example.com"));
+        userRepository.save(newUser("Bob", "bob@example.com"));
 
         Optional<User> result = userRepository.findByEmail("bob@example.com");
 
@@ -42,10 +45,14 @@ class UserRepositoryTest {
 
     @Test
     void shouldRejectDuplicateEmail() {
-        userRepository.saveAndFlush(new User("First", "duplicate@example.com"));
+        userRepository.saveAndFlush(newUser("First", "duplicate@example.com"));
 
         assertThatThrownBy(() ->
-            userRepository.saveAndFlush(new User("Second", "duplicate@example.com"))
+            userRepository.saveAndFlush(newUser("Second", "duplicate@example.com"))
         ).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    private User newUser(String name, String email) {
+        return new User(name, email, PASSWORD_ENCODER.encode("test-password"));
     }
 }

@@ -7,6 +7,7 @@ import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 import java.time.LocalDate;
 
@@ -15,12 +16,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DataJpaTest
 class PersistenceBehaviorTest {
 
+    private static final BCryptPasswordEncoder PASSWORD_ENCODER = new BCryptPasswordEncoder();
+
     @Autowired
     private EntityManager entityManager;
 
     @Test
     void shouldTrackEntityLifecycleStates() {
-        User transientUser = new User("Lifecycle", "lifecycle@example.com");
+        User transientUser = newUser("Lifecycle", "lifecycle@example.com");
         assertThat(entityManager.contains(transientUser)).isFalse();
 
         entityManager.persist(transientUser);
@@ -37,7 +40,7 @@ class PersistenceBehaviorTest {
     @Test
     void shouldReturnSameInstanceFromFirstLevelCache() {
         User user = entityManager.merge(
-            new User("Cache", "cache@example.com")
+            newUser("Cache", "cache@example.com")
         );
         Task task = new Task(
             "First-level cache",
@@ -59,7 +62,7 @@ class PersistenceBehaviorTest {
     @Test
     void shouldPersistManagedEntityChangesThroughDirtyChecking() {
         User user = entityManager.merge(
-            new User("Dirty", "dirty@example.com")
+            newUser("Dirty", "dirty@example.com")
         );
         Task task = new Task(
             "Original title",
@@ -84,7 +87,7 @@ class PersistenceBehaviorTest {
     @Test
     void shouldLoadLazyUserRelationship() {
         User user = entityManager.merge(
-            new User("Lazy", "lazy@example.com")
+            newUser("Lazy", "lazy@example.com")
         );
         Task task = new Task(
             "Lazy relationship",
@@ -103,5 +106,9 @@ class PersistenceBehaviorTest {
         User loadedUser = loadedTask.getUser();
         assertThat(loadedUser.getId()).isEqualTo(user.getId());
         assertThat(loadedUser.getEmail()).isEqualTo("lazy@example.com");
+    }
+
+    private User newUser(String name, String email) {
+        return new User(name, email, PASSWORD_ENCODER.encode("test-password"));
     }
 }
