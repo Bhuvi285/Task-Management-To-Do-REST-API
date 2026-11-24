@@ -9381,3 +9381,3244 @@ The `oauth_accounts` table is created by the existing development/test schema-ge
 **Why does an OAuth-only user still have a password hash?** The existing schema requires one. A cryptographically random value is hashed with BCrypt and discarded, preserving the existing local password model without introducing a known password.
 
 **Why use both `OAuth2UserService` and `OidcUserService`?** GitHub's user profile is loaded through OAuth2 user-info, while Google is an OIDC provider with ID-token claims and a distinct principal type. Delegating to Spring's corresponding services preserves the framework's protocol handling.
+
+
+---------------------------------------------------------------------------------------------------------------
+
+# Phase 4.3 — Social Identity Mapping and OAuth Account Provisioning
+
+## 1. What Did We Build in This Phase?
+
+In Phase 4.2, we configured Google and GitHub OAuth2 clients and established the authorization-code flow.
+
+However, a successful Google or GitHub authentication does not automatically mean that our application knows which local user is logging in.
+
+Our application needs its own user identity.
+
+For example:
+
+- Google authenticates a person.
+- GitHub authenticates a person.
+- Our Task Management API needs to identify that person as a record in its own `users` table.
+
+Phase 4.3 solves this problem.
+
+We implemented:
+
+- `OAuthAccount` entity.
+- `OAuthAccountRepository`.
+- Google OIDC identity extraction.
+- GitHub OAuth2 identity extraction.
+- Verified email handling.
+- Local user provisioning.
+- Existing social identity lookup.
+- Duplicate identity protection.
+- OAuth2 principal wrappers.
+- Concurrent provisioning protection.
+
+**Important:** This phase maps external identities to local users. Issuing our own JWT after social login is intentionally deferred to Phase 4.4.
+
+---
+
+## 2. External Identity vs Local Application User
+
+These are two different concepts.
+
+### External identity
+
+An external identity belongs to an identity provider, such as Google or GitHub.
+
+Examples:
+
+- A Google account identified by Google's `sub` claim.
+- A GitHub account identified by its numeric user ID.
+
+### Local application user
+
+A local user is a record in our own application's database.
+
+Our `User` entity stores application-level information such as:
+
+- User ID.
+- Name.
+- Email.
+- Password hash.
+- Account enabled status.
+- Creation timestamp.
+
+### Why do we need both?
+
+Suppose a user logs in using Google today and GitHub tomorrow.
+
+If both accounts are intentionally associated with the same local application user in the future, that user should still have one local identity and one set of tasks.
+
+The external provider identifies the person during authentication. Our database identifies the person inside our application.
+
+---
+
+## 3. What Is an OAuthAccount Entity?
+
+We created a separate entity named `OAuthAccount`.
+
+It represents the relationship between an external provider identity and a local application user.
+
+Conceptually:
+
+```text
+User
+ |
+ | One local user can have multiple external identities
+ |
+ +---- OAuthAccount (Google)
+ |
+ +---- OAuthAccount (GitHub)
+```
+
+### Main fields
+
+| Field | Purpose |
+|---|---|
+| id | Primary key |
+| user | Associated local User |
+| provider | Google or GitHub |
+| providerUserId | Stable identity assigned by provider |
+| createdAt | When the identity was linked/provisioned |
+
+### Why not store Google and GitHub IDs directly in User?
+
+Because a separate entity is more extensible.
+
+If we store provider-specific fields directly inside `User`, every new identity provider requires additional columns.
+
+With `OAuthAccount`, we can support additional providers without continuously modifying the User entity.
+
+For example, future providers could include Microsoft or LinkedIn.
+
+---
+
+## 4. OAuthProvider Enum
+
+We use an enum to represent supported providers.
+
+Conceptually:
+
+```java
+public enum OAuthProvider {
+    GOOGLE,
+    GITHUB
+}
+```
+
+### Why use an enum?
+
+An enum restricts the provider values to known options.
+
+It avoids arbitrary strings such as:
+
+```text
+google
+Google
+GOOGLE
+git-hub
+GitHub
+```
+
+For database persistence, we use:
+
+```java
+@Enumerated(EnumType.STRING)
+```
+
+This stores the enum name rather than its numeric ordinal.
+
+String persistence is safer when enum declaration order changes.
+
+---
+
+## 5. Database Relationship and Constraints
+
+The `OAuthAccount` entity has a mandatory `ManyToOne` relationship with `User`.
+
+Conceptually:
+
+```text
+users
+----------------
+id (PK)
+name
+email
+password_hash
+...
+
+oauth_accounts
+----------------
+id (PK)
+user_id (FK)
+provider
+provider_user_id
+created_at
+```
+
+### Why ManyToOne?
+
+One local user may eventually have multiple external identities.
+
+However, each OAuthAccount belongs to exactly one local user.
+
+### Unique constraint
+
+We enforce uniqueness on:
+
+```text
+(provider, provider_user_id)
+```
+
+This means:
+
+- A Google identity cannot be registered twice.
+- A GitHub identity cannot be registered twice.
+- The same provider identity cannot belong to two different local users.
+
+### Why is a database constraint necessary?
+
+An application-level check alone is insufficient.
+
+Consider two requests:
+
+1. Request A checks whether an identity exists.
+2. Request B checks whether the same identity exists.
+3. Both find no existing record.
+4. Both try to insert the same identity.
+
+Without a database constraint, duplicate records could be created.
+
+The unique constraint makes the database the final authority for identity uniqueness.
+
+We also added an index on `user_id` to support lookups of external identities associated with a local user.
+
+---
+
+## 6. Stable Provider Identifiers
+
+We must distinguish a provider's stable account identifier from its email address.
+
+An email address can change. A stable provider identifier is designed to identify the provider account.
+
+### Google — `sub`
+
+Google uses OpenID Connect.
+
+Its `sub` claim represents the subject identifier of the authenticated user.
+
+Example:
+
+```json
+{
+  "sub": "google-account-unique-id",
+  "email": "user@example.com",
+  "email_verified": true,
+  "name": "Example User"
+}
+```
+
+We use `sub` as the Google `providerUserId`.
+
+### GitHub — numeric `id`
+
+GitHub exposes a numeric user ID in its user profile.
+
+Example:
+
+```json
+{
+  "id": 12345678,
+  "login": "example-user",
+  "name": "Example User",
+  "email": null
+}
+```
+
+We use the GitHub numeric ID as the provider identity.
+
+### Why not use email as providerUserId?
+
+Because:
+
+- Users can change email addresses.
+- Some provider profiles do not expose email.
+- Email alone is not a reliable permanent identity key.
+- Email verification status must also be considered.
+
+The correct identity key is the provider plus its stable account identifier.
+
+---
+
+## 7. Google OIDC Identity Extraction
+
+Google supports OpenID Connect.
+
+Our implementation uses Spring Security's OIDC support rather than manually implementing ID-token signature validation.
+
+The important Google claims are:
+
+| Claim | Meaning |
+|---|---|
+| sub | Stable Google account identifier |
+| email | User's email |
+| email_verified | Whether Google considers the email verified |
+| name | User's display name |
+| given_name | First/given name |
+| family_name | Last/family name |
+| picture | Profile image URL |
+
+### Why check `email_verified`?
+
+A Google profile email should not automatically be trusted without checking its verification status.
+
+Our provisioning process requires:
+
+- A valid subject identifier.
+- A non-empty email.
+- A verified email.
+
+If the email is not verified, the application must reject provisioning.
+
+### Why use Spring's OIDC support?
+
+Spring Security handles the OIDC protocol responsibilities, including processing and validating the provider's ID token.
+
+We should not implement cryptographic ID-token validation ourselves when the framework already provides it.
+
+---
+
+## 8. GitHub OAuth2 Identity Extraction
+
+GitHub uses OAuth2 for this integration.
+
+The important profile fields include:
+
+- `id`
+- `login`
+- `name`
+- `email`
+
+One important difference from Google is that GitHub's public profile email may be `null`.
+
+For example:
+
+```json
+{
+  "id": 12345678,
+  "login": "example-user",
+  "name": "Example User",
+  "email": null
+}
+```
+
+### How do we retrieve a verified GitHub email?
+
+Our implementation includes:
+
+- `GithubEmailClient`
+- `GithubEmailClientImpl`
+- `GithubOAuth2UserService`
+
+When the public profile does not provide a suitable email, the backend uses the authenticated provider access token to retrieve email information from GitHub's email endpoint.
+
+The application selects a verified email, preferably the verified primary email.
+
+### Why is this necessary?
+
+A user may keep their GitHub email private.
+
+If we relied only on the public profile, social registration could fail even when the user has a verified email available through GitHub's API.
+
+### Security requirements
+
+- Do not trust an unverified email.
+- Do not log the provider access token.
+- Do not expose the provider access token to the frontend.
+- Handle unavailable or missing verified emails safely.
+
+---
+
+## 9. OAuth2UserService and OidcUserService
+
+Spring Security provides different user-loading mechanisms for OAuth2 and OpenID Connect.
+
+### OAuth2UserService
+
+`OAuth2UserService` loads user attributes from an OAuth2 provider.
+
+GitHub uses this path in our implementation.
+
+Our project includes:
+
+```text
+GithubOAuth2UserService
+```
+
+It loads the GitHub profile, obtains a verified email when necessary, and uses the social provisioning service to resolve the local user.
+
+### OidcUserService
+
+`OidcUserService` handles OpenID Connect user information.
+
+Google uses this path in our implementation.
+
+Our project includes:
+
+```text
+GoogleOidcUserService
+```
+
+It delegates the OIDC processing to Spring's standard implementation and uses the validated identity claims to resolve the local user.
+
+### Difference
+
+| OAuth2UserService | OidcUserService |
+|---|---|
+| Used for OAuth2 user loading | Used for OpenID Connect user loading |
+| Loads OAuth2 user attributes | Processes OIDC identity information |
+| Used by GitHub integration | Used by Google integration |
+
+OIDC builds on OAuth2 and adds standardized authentication and identity information.
+
+---
+
+## 10. SocialAccountService — Central Provisioning Logic
+
+We created a dedicated service named:
+
+```text
+SocialAccountService
+```
+
+It is responsible for mapping external identities to local users.
+
+This keeps business logic out of controllers and Spring Security configuration.
+
+### Existing identity flow
+
+When a user logs in using Google or GitHub:
+
+1. Spring Security authenticates the external identity.
+2. The provider-specific service extracts the identity.
+3. The `SocialAccountService` searches for an existing OAuthAccount.
+4. If found, it retrieves the associated local user.
+5. It verifies that the local user is enabled.
+6. It returns the existing local user.
+
+### First-time login flow
+
+If the identity does not exist:
+
+1. Validate the provider identity.
+2. Validate the email.
+3. Check for an existing local email.
+4. Reject an unsafe email collision.
+5. Create a new local user.
+6. Create the associated OAuthAccount.
+7. Persist both consistently.
+8. Return the local user.
+
+### Why a dedicated service?
+
+It separates responsibilities:
+
+- Provider-specific services extract identity information.
+- `SocialAccountService` handles local provisioning.
+- Repositories handle persistence.
+- Security configuration connects these components.
+
+This makes the design easier to test and maintain.
+
+---
+
+## 11. Email Collision and Automatic Account Linking
+
+This is one of the most important security decisions in this phase.
+
+Imagine:
+
+1. A user registers using email/password.
+2. Their local account already exists.
+3. Later, someone attempts Google login with the same email.
+4. No Google OAuthAccount exists for that Google identity.
+
+Should the application automatically link Google to the existing account?
+
+**No.**
+
+Matching email addresses alone are not sufficient authorization to link accounts.
+
+Our implementation rejects automatic linking and keeps the existing local account unchanged.
+
+### Why is automatic linking dangerous?
+
+If an application trusts an email without carefully verifying ownership and linking authorization, an attacker may gain access to an existing account through an incorrectly trusted external identity.
+
+### Correct approach
+
+Account linking should be a separate authenticated operation.
+
+A future account-linking flow should require:
+
+- An already authenticated local user.
+- Appropriate reauthentication or confirmation.
+- A protected linking operation.
+- Verification that the external identity is not already linked elsewhere.
+
+Explicit account linking is not implemented in Phase 4.3.
+
+---
+
+## 12. OAuth-Only Users and Password Hashing
+
+Our existing `User` entity requires a non-null password hash.
+
+But users who register through Google or GitHub do not provide a local application password.
+
+We need a safe way to represent these users without breaking the existing database schema.
+
+### Our implementation
+
+For OAuth-only users:
+
+1. Generate a cryptographically random password value.
+2. Encode it using BCrypt.
+3. Store only the resulting BCrypt hash.
+4. Never expose or return the raw generated password.
+
+### Why use SecureRandom?
+
+`SecureRandom` generates cryptographically strong random values.
+
+A predictable value such as:
+
+```text
+google123
+defaultPassword
+oauthUser
+```
+
+would be unsafe.
+
+### Why BCrypt?
+
+BCrypt is a password-hashing algorithm.
+
+It is intentionally computationally expensive and uses a salt.
+
+Our local authentication system already uses BCrypt, so the approach remains compatible with the existing password model.
+
+### Important distinction
+
+An OAuth-only account must not be able to log in using a known default password.
+
+The generated value is never disclosed, and the user must use the external provider unless a separate, secure local-password setup process is introduced.
+
+---
+
+## 13. Transaction Management During Provisioning
+
+Creating a local user and its OAuthAccount must be treated as one logical operation.
+
+Consider:
+
+```text
+Create User
+    |
+    v
+Create OAuthAccount
+    |
+    v
+Save OAuthAccount
+```
+
+What happens if user creation succeeds but OAuthAccount creation fails?
+
+We could end up with an orphaned local user.
+
+### Why use `@Transactional`?
+
+A transaction ensures that related database operations succeed or roll back together.
+
+Conceptually:
+
+```java
+@Transactional
+public User provisionSocialUser(...) {
+    // Create local user
+    // Create OAuthAccount
+    // Persist both
+}
+```
+
+If the operation fails and the transaction rolls back, the database should not retain only half of the provisioning operation.
+
+### Important transaction principle
+
+A transaction provides atomicity for the database work participating in that transaction.
+
+It does not automatically make external HTTP calls transactional.
+
+For example, retrieving a GitHub email is an external network operation, not part of the database transaction's atomic commit.
+
+Keep external calls and database transaction boundaries thoughtfully separated.
+
+---
+
+## 14. Concurrent First-Time Login
+
+Concurrency is a major consideration.
+
+Imagine two requests arrive at almost the same time for the same Google account.
+
+```text
+Request A                 Request B
+    |                         |
+    v                         v
+Check OAuthAccount        Check OAuthAccount
+    |                         |
+    v                         v
+Not found                 Not found
+    |                         |
+    v                         v
+Create User               Create User
+    |                         |
+    v                         v
+Insert OAuthAccount       Insert OAuthAccount
+```
+
+Both requests may initially observe that no account exists.
+
+This is called a race condition.
+
+### How did we protect against it?
+
+Our implementation uses:
+
+- Database unique constraint on `(provider, provider_user_id)`.
+- Transactional provisioning.
+- Safe handling of persistence conflicts.
+- Rollback of failed provisioning.
+
+The database unique constraint is the final protection against duplicate provider identities.
+
+### Why is an existence check insufficient?
+
+Because two transactions can both pass the existence check before either inserts its record.
+
+The database constraint prevents both inserts from succeeding.
+
+### Important principle
+
+Application-level validation improves normal behavior, but database constraints protect the final integrity of the data.
+
+---
+
+## 15. OAuth2 Principal Wrappers
+
+Spring Security represents an authenticated OAuth2 user through security principal objects.
+
+Our implementation introduces local-user-aware principal wrappers:
+
+- `LocalUserOAuth2Principal`
+- `LocalOAuth2User`
+- `LocalOidcUser`
+
+### Why do we need them?
+
+After provider authentication, we want the authenticated principal to carry the resolved local application user.
+
+Conceptually:
+
+```text
+Google / GitHub Authentication
+             |
+             v
+Provider Principal
+             |
+             v
+SocialAccountService
+             |
+             v
+Local User
+             |
+             v
+Local OAuth2 Principal Wrapper
+```
+
+This gives later security components access to the local application user rather than forcing every component to resolve the external identity again.
+
+### Why separate OAuth2 and OIDC wrappers?
+
+GitHub follows the OAuth2 user model, while Google follows the OIDC user model.
+
+The wrappers preserve the appropriate Spring Security interfaces and their respective identity information.
+
+---
+
+## 16. Disabled Account Handling
+
+Our application already supports enabled/disabled local users.
+
+A user should not be able to bypass this rule by switching authentication methods.
+
+For example:
+
+- A local user is disabled.
+- The user tries email/password login.
+- The user should be rejected.
+- The same user tries Google login.
+- The user should still be rejected.
+
+Our social provisioning flow checks the local account's enabled status before returning it as an authenticated application user.
+
+**Security principle:** All authentication methods must respect the same local account status.
+
+---
+
+## 17. Testing Strategy
+
+The Phase 4.3 implementation added tests for:
+
+- OAuthAccount repository persistence and constraints.
+- Social account provisioning.
+- Google identity mapping.
+- GitHub identity mapping.
+- GitHub email endpoint behavior.
+- Concurrent provisioning.
+
+### Why mock GitHub's email endpoint?
+
+Automated tests should not depend on real provider servers or credentials.
+
+A mocked HTTP response allows us to test cases such as:
+
+- A verified primary email exists.
+- The public email is unavailable.
+- No verified email is returned.
+- The endpoint fails.
+
+### Why test concurrent provisioning?
+
+A normal unit test cannot prove that the database constraint works under concurrent requests.
+
+Concurrency integration coverage helps verify that simultaneous first-time login attempts cannot create duplicate provider identities or leave orphaned users.
+
+### Reported test result
+
+```text
+Java version: 21
+Tests run: 98
+Failures: 0
+Errors: 0
+Skipped: 0
+```
+
+This is the reported final clean test result for Phase 4.3.
+
+---
+
+## 18. Files Created and Modified
+
+### Created production files
+
+| File | Responsibility |
+|---|---|
+| OAuthProvider | Supported provider enum |
+| OAuthAccount | External identity entity |
+| OAuthAccountRepository | External identity persistence |
+| SocialIdentity | Normalized external identity data |
+| SocialAccountService | Local user provisioning |
+| LocalUserOAuth2Principal | Local-user-aware principal contract |
+| LocalOAuth2User | OAuth2 principal wrapper |
+| LocalOidcUser | OIDC principal wrapper |
+| GithubEmailClient | GitHub email client abstraction |
+| GithubEmailClientImpl | GitHub email retrieval |
+| GithubOAuth2UserService | GitHub identity loading |
+| GoogleOidcUserService | Google identity loading |
+
+### Modified files
+
+- `UserRepository`
+- `SecurityConfig`
+- `learning_concepts.md`
+
+The OAuth2 Client dependency was already added in Phase 4.2.
+
+---
+
+## 19. What We Have Not Implemented Yet
+
+Phase 4.3 deliberately stops before issuing application tokens after social login.
+
+Still pending:
+
+- Custom OAuth2 authentication success handler.
+- Issuing our own JWT access token after Google login.
+- Issuing our own JWT access token after GitHub login.
+- Refresh-token issuance after social login.
+- Returning the same `LoginResponse` structure as local login.
+- Social login integration testing for the complete token response.
+
+These belong to Phase 4.4.
+
+Account linking and unlinking are also deferred.
+
+---
+
+## 20. Interview Questions
+
+**Q1. What is the difference between an OAuth identity and a local user?**
+
+An OAuth identity belongs to an external provider. A local user is the application's own database record. Multiple external identities may eventually be associated with one local user.
+
+**Q2. Why do we need an OAuthAccount entity?**
+
+It stores the mapping between an external provider identity and a local application user without adding provider-specific columns to the User entity.
+
+**Q3. Why use Google's `sub` claim?**
+
+It is Google's stable subject identifier and is a better identity key than email.
+
+**Q4. Why use GitHub's numeric ID?**
+
+It uniquely identifies the GitHub account independently of its username or email address.
+
+**Q5. Why is email verification important?**
+
+It helps establish that the provider has verified ownership of the email address before we use it for local account provisioning.
+
+**Q6. Why should we not automatically link accounts using email?**
+
+Matching email alone does not establish that an external identity is authorized to access an existing local account.
+
+**Q7. What is the purpose of a database unique constraint?**
+
+It guarantees identity uniqueness even when concurrent requests bypass application-level existence checks.
+
+**Q8. Why use `@Transactional` during social provisioning?**
+
+It ensures that local user creation and OAuthAccount persistence succeed or roll back together.
+
+**Q9. Why does GitHub require special email handling?**
+
+GitHub's public profile email may be unavailable. We may need to retrieve verified email information through its authenticated email endpoint.
+
+**Q10. Why use `SecureRandom` for OAuth-only password values?**
+
+It generates unpredictable values, preventing OAuth-only accounts from receiving predictable placeholder passwords.
+
+**Q11. Why do we need OAuth2UserService and OidcUserService?**
+
+They are Spring Security extension points for loading authenticated OAuth2 and OIDC user information.
+
+**Q12. Why do we need local-user-aware principal wrappers?**
+
+They allow the authenticated Spring Security principal to carry the resolved local user, making later application authentication and authorization integration easier.
+
+**Q13. Why is concurrency important during first-time social login?**
+
+Two simultaneous requests may both observe that an external identity does not exist. Database uniqueness and transactional conflict handling prevent duplicate provisioning.
+
+**Q14. Does successful Google authentication automatically issue our application's JWT?**
+
+No. Provider authentication and application-token issuance are separate steps. Our custom JWT issuance is implemented in Phase 4.4.
+
+---
+
+## 21. Phase 4.3 Completion Summary
+
+Phase 4.3 established the bridge between external provider identities and our application's local user model.
+
+The architecture now supports:
+
+```text
+Google Login ─────┐
+                  |
+                  v
+             Provider Identity
+                  |
+GitHub Login ─────┘
+                  |
+                  v
+          Identity Extraction
+                  |
+                  v
+          SocialAccountService
+                  |
+                  v
+            Local User
+                  |
+                  v
+        OAuth2/OIDC Principal
+```
+
+The next milestone connects this authenticated local user to our existing JWT and refresh-token authentication system.
+
+**Next: Phase 4.4 — OAuth2 Success Handler and JWT Integration.**
+
+# Phase 4.4 — OAuth2 Success Handler and JWT Integration
+
+Phase 4.4 connects successful Google and GitHub authentication to the application's existing access-token and refresh-token contract. Provider authentication establishes who authenticated; the local `User` remains the identity used by the Task Management API.
+
+## OAuth2 authentication success
+
+Spring Security invokes `OAuth2AuthenticationSuccessHandler` only after the configured OAuth2/OIDC authentication flow succeeds. The handler extracts the local user through `LocalUserOAuth2Principal`, an abstraction implemented by both `LocalOAuth2User` and `LocalOidcUser`. It does not inspect provider-specific claim maps or use a provider token as the application's credential.
+
+Google's OIDC and GitHub's OAuth2 paths therefore converge on the same handler and token lifecycle. The success handler rejects a missing, invalid, or disabled local user. `RefreshTokenLifecycleService.issueForUser` also checks the persisted account's enabled status before issuing tokens, protecting all callers against a disabled account and status changes between authentication and issuance.
+
+## Reusing the application token lifecycle
+
+The handler calls the existing `RefreshTokenLifecycleService.issueForUser(...)`. This service uses the existing `JwtService` to create the application's HS256 access token with its configured issuer, subject, and expiration, and uses `RefreshTokenGenerator` for a fresh opaque refresh token. Only the refresh-token hash is persisted; expiry and token-family behavior remain unchanged. Each successful login creates a distinct refresh session, while rotation and revocation continue to use the existing lifecycle.
+
+Local email/password login already uses the same service, so both flows return the existing `LoginResponse` record with `accessToken`, `refreshToken`, `tokenType`, and `expiresIn`. Provider access tokens and ID tokens are never returned in that response.
+
+## REST response and failure handling
+
+On success, the callback returns HTTP 200 with `application/json`, `Cache-Control: no-store`, and `Pragma: no-cache`. Tokens are returned only in the response body; the success handler does not redirect with credentials in a URL or introduce cookies.
+
+`OAuth2AuthenticationFailureHandler` returns a generic HTTP 401 JSON error for provider authentication and callback failures. It does not serialize provider exception details and adds the same cache-prevention headers. In particular, OAuth2 state validation remains enabled: the existing session-backed authorization-request repository checks the callback state, and an invalid state reaches the generic failure response without issuing tokens.
+
+The API remains stateless for subsequent requests. The temporary session is used only to hold OAuth2 authorization state across the provider redirect; API requests continue to authenticate with `Authorization: Bearer <application-access-token>`.
+
+## Automated testing
+
+Handler unit tests cover both local principal wrappers, response shape and headers, provider-token exclusion, disabled users, and unsupported principals. Integration tests exercise the real JWT and refresh-token lifecycle with H2, including hashed refresh-token persistence, independent Google/GitHub sessions, rotation, revocation, and bearer-token acceptance by the security filter. Provider HTTP calls are not made by these tests. The authorization-flow test verifies a mismatched OAuth2 state fails with the generic response and does not redirect with tokens.
+
+## Security considerations
+
+- Only a principal implementing the local-user abstraction can receive application tokens.
+- The stored account is rechecked as enabled at token issuance time.
+- JWT signing configuration and refresh-token entropy, hashing, expiry, rotation, reuse detection, and revocation are reused rather than reimplemented.
+- OAuth responses are non-cacheable and contain no provider credentials.
+- Provider failures and invalid state fail closed with no token issuance.
+
+## Important interview questions
+
+**Why use an `AuthenticationSuccessHandler`?** It is Spring Security's extension point for behavior after authentication succeeds; it keeps token response logic out of controllers and configuration.
+
+**Why extract the local user instead of reading provider claims again?** Phase 4.3 already validated and mapped provider identity to a local account. The principal abstraction carries that resolved identity consistently for both OIDC and OAuth2 providers.
+
+**Why should a provider access token not be used as the API JWT?** It is issued for the provider's resources and has a different issuer, audience, and trust boundary from the application's API token.
+
+**How do local and social authentication keep a consistent response?** Both invoke `RefreshTokenLifecycleService`, which produces the same `LoginResponse` and uses the existing JWT and refresh-token implementations.
+
+**Why does a stateless API still use temporary session state during OAuth2 login?** The authorization request and `state` must survive the browser redirect and be validated on callback. That temporary flow state does not make subsequent API authentication session-based.
+
+**How are OAuth2 failure details kept private?** A dedicated failure handler returns a fixed generic message and never serializes provider exceptions or tokens.
+
+------------------------------------------------------------------------
+
+# Phase 4.4 — OAuth2 Success Handler and JWT Integration
+
+## 1. What Did We Build in This Phase?
+
+In Phase 4.3, we implemented Google and GitHub identity mapping and local user provisioning.
+
+However, after successful social authentication, our application still needed to issue its own authentication tokens.
+
+Phase 4.4 completes this integration.
+
+We implemented:
+
+- `OAuth2AuthenticationSuccessHandler`
+- Generic OAuth2 JSON failure handling
+- JWT issuance after Google login
+- JWT issuance after GitHub login
+- Refresh-token issuance through the existing lifecycle service
+- Consistent `LoginResponse`
+- Non-cacheable JSON authentication responses
+- Enabled-user validation in the refresh-token issuance path
+- Integration tests for the complete social-login token flow
+
+**Main objective:** Local login and social login must use the same application-token issuance architecture.
+
+---
+
+## 2. Authentication vs Token Issuance
+
+Authentication and token issuance are related, but they are not the same operation.
+
+### Authentication
+
+Authentication establishes who the user is.
+
+For local login:
+
+- The user provides email and password.
+- Spring Security validates the credentials.
+- The application identifies the local user.
+
+For social login:
+
+- Google or GitHub authenticates the user.
+- Spring Security processes the OAuth2/OIDC response.
+- Our application maps the provider identity to a local user.
+
+### Token issuance
+
+After authentication, our application generates its own tokens.
+
+These tokens are used to authenticate subsequent requests to our Task Management API.
+
+### Important distinction
+
+Google's access token is not our application's access token.
+
+GitHub's access token is not our application's access token.
+
+Our backend generates its own JWT after successfully resolving the local application user.
+
+---
+
+## 3. Why Do We Need an AuthenticationSuccessHandler?
+
+Spring Security provides an extension point called:
+
+```java
+AuthenticationSuccessHandler
+```
+
+It is invoked after successful authentication.
+
+It allows an application to define what should happen after authentication succeeds.
+
+For a traditional web application, this may involve redirecting the user to a dashboard.
+
+For our REST API, we need to return a JSON response containing our application's authentication tokens.
+
+We therefore implemented:
+
+```text
+OAuth2AuthenticationSuccessHandler
+```
+
+### Responsibilities
+
+1. Receive the successful OAuth2/OIDC authentication.
+2. Extract the local user from the custom principal.
+3. Validate the local user.
+4. Issue an application JWT.
+5. Issue an opaque refresh token.
+6. Construct the existing `LoginResponse`.
+7. Serialize the response as JSON.
+8. Return HTTP 200 with appropriate security headers.
+
+### Why use a separate handler?
+
+It keeps OAuth2 post-authentication behavior separate from:
+
+- Provider identity extraction.
+- Local user provisioning.
+- Security configuration.
+- JWT implementation.
+- Refresh-token persistence.
+
+This separation makes the implementation easier to maintain and test.
+
+---
+
+## 4. Understanding the OAuth2 Authentication Lifecycle
+
+Our social-login flow now looks like this:
+
+```text
+User
+ |
+ v
+Google / GitHub Login
+ |
+ v
+External Provider Authentication
+ |
+ v
+Spring Security OAuth2/OIDC Filters
+ |
+ v
+GoogleOidcUserService / GithubOAuth2UserService
+ |
+ v
+SocialAccountService
+ |
+ v
+Local Application User
+ |
+ v
+Local OAuth2/OIDC Principal
+ |
+ v
+OAuth2AuthenticationSuccessHandler
+ |
+ v
+Application JWT + Refresh Token
+ |
+ v
+JSON LoginResponse
+```
+
+### Explanation
+
+1. The user starts Google or GitHub login.
+2. The external provider authenticates the user.
+3. Spring Security processes the OAuth2/OIDC callback.
+4. The provider-specific user service loads the external identity.
+5. `SocialAccountService` resolves the local user.
+6. The local-user-aware principal is returned to Spring Security.
+7. The authentication success handler receives the authenticated principal.
+8. The handler extracts the local user.
+9. The existing token issuance services generate our application's tokens.
+10. The response is returned to the client.
+
+The important part is that both providers eventually reach the same token-issuance implementation.
+
+---
+
+## 5. Local Application User vs Provider Principal
+
+Spring Security represents an authenticated user through an `Authentication` object.
+
+The `Authentication` object contains a principal.
+
+For social login, the principal initially represents the external provider identity.
+
+However, our application needs the corresponding local user.
+
+In Phase 4.3, we created local-user-aware principal wrappers:
+
+- `LocalUserOAuth2Principal`
+- `LocalOAuth2User`
+- `LocalOidcUser`
+
+### Why are these wrappers useful?
+
+They allow our authentication success handler to retrieve the local application user from the authenticated principal.
+
+Conceptually:
+
+```text
+Authentication
+      |
+      v
+Principal
+      |
+      v
+Local OAuth2/OIDC Principal
+      |
+      v
+Local User
+```
+
+This avoids repeating provider identity lookup inside the success handler.
+
+### Important principle
+
+The success handler must not trust arbitrary request parameters or unvalidated provider attributes.
+
+It should use the principal produced by the successfully completed Spring Security authentication flow.
+
+---
+
+## 6. Reusing JwtService
+
+Our project already has a dedicated `JwtService`.
+
+It is responsible for generating and validating our application's JWTs.
+
+We must reuse it for social login rather than implementing another JWT generator.
+
+### Why?
+
+Suppose local login and Google login generate tokens differently.
+
+They might accidentally use different:
+
+- Signing algorithms.
+- Secret keys.
+- Expiration values.
+- Subject conventions.
+- Claims.
+- Validation rules.
+
+That would make authentication inconsistent.
+
+By reusing the same `JwtService`, both login methods follow the same token-generation rules.
+
+### Conceptual flow
+
+```text
+Local Login
+     |
+     v
+Authenticated Local User
+     |
+     v
+JwtService
+     |
+     v
+Application JWT
+```
+
+```text
+Google / GitHub Login
+     |
+     v
+Resolved Local User
+     |
+     v
+JwtService
+     |
+     v
+Application JWT
+```
+
+Both flows produce application JWTs through the same implementation.
+
+---
+
+## 7. Reusing RefreshTokenLifecycleService
+
+Our application also has a dedicated:
+
+```text
+RefreshTokenLifecycleService
+```
+
+It manages refresh-token creation and lifecycle operations.
+
+It handles important responsibilities such as:
+
+- Generating secure opaque refresh tokens.
+- Hashing tokens before database storage.
+- Applying expiration.
+- Managing refresh-token sessions.
+- Rotating refresh tokens.
+- Detecting token reuse.
+- Revoking token families.
+
+### Why must OAuth2 login reuse it?
+
+We do not want one refresh-token implementation for local login and another for social login.
+
+Otherwise, security behavior could differ between authentication methods.
+
+The success handler should use the existing lifecycle service rather than manually creating or persisting refresh tokens.
+
+### Shared architecture
+
+```text
+              Local Login
+                  |
+                  |
+              Social Login
+                  |
+                  v
+          Authenticated Local User
+                  |
+                  v
+       Shared Token Issuance Logic
+                  |
+          +-------+-------+
+          |               |
+          v               v
+       JwtService   RefreshTokenLifecycleService
+          |               |
+          v               v
+      Access JWT     Opaque Refresh Token
+          |               |
+          +-------+-------+
+                  |
+                  v
+             LoginResponse
+```
+
+---
+
+## 8. Enabled-User Validation
+
+Our application supports enabled and disabled local users.
+
+A disabled user must not obtain new authentication tokens.
+
+In Phase 4.4, we added an enabled-user guard to:
+
+```text
+RefreshTokenLifecycleService.issueForUser(...)
+```
+
+### Why put the guard in the lifecycle service?
+
+Token issuance is a security-sensitive operation.
+
+If the enabled-user check exists only inside the local login controller or OAuth2 success handler, another caller might accidentally issue tokens without performing the same check.
+
+Placing the guard in the shared issuance path provides another layer of protection.
+
+### Expected behavior
+
+| User status | Token issuance |
+|---|---|
+| Enabled user | Allowed |
+| Disabled user | Rejected |
+| Missing user | Rejected |
+
+This is a defense-in-depth measure.
+
+It does not replace the account checks performed during authentication.
+
+---
+
+## 9. LoginResponse Consistency
+
+Our local login already returns a response represented by:
+
+```text
+LoginResponse
+```
+
+Social login should return the same response structure.
+
+### Why is this important?
+
+Imagine a frontend application supports:
+
+- Email/password login.
+- Google login.
+- GitHub login.
+
+If each login method returns a different response structure, the frontend must implement different token-handling logic for each provider.
+
+A consistent response avoids that complexity.
+
+### Expected response contract
+
+The exact fields depend on the existing `LoginResponse` class.
+
+For example, it may contain:
+
+```json
+{
+  "accessToken": "application-jwt",
+  "refreshToken": "opaque-refresh-token",
+  "tokenType": "Bearer",
+  "expiresIn": 900
+}
+```
+
+The example is illustrative. The existing DTO defines the actual contract.
+
+### Important security rule
+
+The response must contain our application's tokens, not the provider's access token or ID token.
+
+---
+
+## 10. Returning JSON Instead of Redirecting
+
+Spring Security's traditional OAuth2 login behavior may redirect the browser after successful authentication.
+
+Our application is a REST API.
+
+Therefore, the success handler returns JSON instead.
+
+### HTTP response
+
+The successful OAuth2 callback returns:
+
+```text
+HTTP 200 OK
+Content-Type: application/json
+```
+
+It serializes the existing `LoginResponse`.
+
+### Why not redirect with tokens in the URL?
+
+Putting access or refresh tokens in URLs is dangerous because URLs can appear in:
+
+- Browser history.
+- Server access logs.
+- Proxy logs.
+- Analytics systems.
+- Referrer information.
+
+Tokens should not be passed through query parameters or URL fragments as part of this implementation.
+
+Our success handler returns them in the JSON response body.
+
+---
+
+## 11. Cache-Control and Pragma Headers
+
+Authentication responses contain sensitive information.
+
+We do not want browsers or intermediary caches to store these responses.
+
+Our implementation sets:
+
+```http
+Cache-Control: no-store
+Pragma: no-cache
+```
+
+### Cache-Control: no-store
+
+It instructs caches not to store the response.
+
+This is particularly important for responses containing access and refresh tokens.
+
+### Pragma: no-cache
+
+This is a legacy HTTP cache-control header retained for compatibility with older HTTP/1.0 caching behavior.
+
+### Why use both?
+
+Together, they help prevent sensitive authentication responses from being cached.
+
+These headers should be included on both success and failure responses where appropriate.
+
+---
+
+## 12. OAuth2 Authentication Failure Handler
+
+Authentication can fail because of:
+
+- Invalid provider response.
+- Invalid OAuth2 state.
+- Provider authentication failure.
+- Missing or invalid local principal.
+- Disabled local user.
+- Provisioning failure.
+
+Our implementation includes a generic JSON failure handler.
+
+### Why generic errors?
+
+Returning raw provider exceptions can expose internal information.
+
+A failure response should not reveal:
+
+- Internal stack traces.
+- Provider access tokens.
+- Client secrets.
+- Database details.
+- Sensitive account information.
+
+### Current reported behavior
+
+The OAuth2 failure handler returns a generic non-cacheable HTTP 401 response.
+
+It does not issue access or refresh tokens.
+
+---
+
+## 13. Refresh Token Sessions After Social Login
+
+Social login must use the same refresh-token lifecycle as local login.
+
+When a user successfully logs in through Google or GitHub:
+
+1. A new opaque refresh token is generated.
+2. Its hash is stored in the database.
+3. Its expiration is applied.
+4. A separate refresh-token session is created.
+5. The raw refresh token is returned through the existing login response.
+
+### Why separate sessions?
+
+A user might log in using:
+
+- A laptop.
+- A desktop.
+- A mobile device.
+- A different browser.
+
+Each login should have its own refresh-token session.
+
+This allows sessions to be managed and revoked independently according to the existing token-family rules.
+
+### Important distinction
+
+The provider's OAuth2 access token and our application's refresh token serve different purposes.
+
+The provider token is used for provider-related API access.
+
+Our opaque refresh token is used to obtain new application access tokens through our refresh endpoint.
+
+We should not expose provider tokens to the frontend unless a separate, explicit requirement calls for it.
+
+---
+
+## 14. OAuth2 Session State vs Stateless REST API
+
+Our application uses:
+
+```java
+SessionCreationPolicy.STATELESS
+```
+
+The OAuth2 authorization process still needs temporary state to validate the provider callback.
+
+Phase 4.2 introduced a session-backed authorization-request repository.
+
+Phase 4.4 preserves that design.
+
+### Temporary OAuth2 session
+
+Used for:
+
+- Storing the authorization request.
+- Preserving the state parameter across redirects.
+- Validating the callback.
+
+### JWT authentication
+
+Used for:
+
+- Authenticating protected REST API requests.
+- Identifying the local application user.
+- Authorizing API access.
+
+### Subsequent API requests
+
+After login, the client sends:
+
+```http
+Authorization: Bearer <application-access-token>
+```
+
+The JWT authentication filter processes the request.
+
+The REST API does not depend on an authenticated HTTP session.
+
+---
+
+## 15. End-to-End Authentication Architecture
+
+Our authentication architecture now supports three login paths:
+
+```text
+                  Authentication
+                         |
+          +--------------+--------------+
+          |              |              |
+          v              v              v
+       Local           Google          GitHub
+       Login            Login           Login
+          |              |              |
+          v              v              v
+     Credentials      OIDC Flow      OAuth2 Flow
+          |              |              |
+          |              v              v
+          |        SocialAccountService
+          |              |
+          |              v
+          |          Local User
+          |              |
+          +--------------+
+                         |
+                         v
+              Shared Token Issuance
+                         |
+              +----------+----------+
+              |                     |
+              v                     v
+           JwtService      RefreshTokenLifecycleService
+              |                     |
+              v                     v
+          Access JWT          Refresh Token
+              |                     |
+              +----------+----------+
+                         |
+                         v
+                   LoginResponse
+                         |
+                         v
+                 Client Application
+                         |
+                         v
+               Protected REST APIs
+```
+
+The key architectural benefit is that all three login methods ultimately use one local-user and token-issuance model.
+
+---
+
+## 16. Testing Strategy
+
+Phase 4.4 includes handler unit tests and H2-backed integration tests.
+
+### Success handler tests
+
+Test:
+
+- Google authentication produces an application token response.
+- GitHub authentication produces an application token response.
+- Existing response fields remain consistent.
+- Provider tokens are not returned.
+- Disabled and missing users are rejected.
+- JSON content type is correct.
+- Cache-prevention headers are present.
+
+### Refresh-token integration tests
+
+Test:
+
+- Refresh-token hashes are stored.
+- Different login sessions remain distinct.
+- Rotation works.
+- Reuse detection works.
+- Family revocation works.
+
+### Security integration tests
+
+Test:
+
+- OAuth2 callback reaches the success handler.
+- Invalid state does not issue tokens.
+- Failure responses are generic.
+- JWT bearer authentication still works.
+- Local login remains functional.
+
+### Reported test result
+
+```text
+Java version: 21
+Tests run: 105
+Failures: 0
+Errors: 0
+Skipped: 0
+```
+
+This is the reported final clean test result for Phase 4.4.
+
+---
+
+## 17. Files and Components Added
+
+### Production component
+
+| Component | Responsibility |
+|---|---|
+| OAuth2AuthenticationSuccessHandler | Issues application tokens after successful social login |
+| Generic OAuth2 failure handler | Returns safe JSON authentication failures |
+
+### Modified components
+
+- `SecurityConfig`
+- `RefreshTokenLifecycleService`
+- `learning_concepts.md`
+
+The existing JWT and refresh-token implementation was reused rather than duplicated.
+
+---
+
+## 18. Important Interview Questions
+
+**Q1. What is AuthenticationSuccessHandler in Spring Security?**
+
+It is an extension point that defines what happens after successful authentication.
+
+**Q2. Why did we implement a custom OAuth2 success handler?**
+
+Because our REST API needs to return application JWT and refresh tokens as JSON instead of using the default redirect behavior.
+
+**Q3. Does Google issue our application's JWT?**
+
+No. Google authenticates the external identity. Our backend issues its own JWT after resolving the local user.
+
+**Q4. Why reuse JwtService?**
+
+It ensures all login methods use the same JWT signing, claims, subject, and expiration rules.
+
+**Q5. Why reuse RefreshTokenLifecycleService?**
+
+It ensures all login methods follow the same secure refresh-token generation, hashing, expiration, rotation, and revocation rules.
+
+**Q6. Why should disabled users be rejected during token issuance?**
+
+Otherwise, an alternative authentication path could accidentally issue tokens to a disabled account.
+
+**Q7. Why return the same LoginResponse for local and social login?**
+
+It provides a consistent authentication contract for frontend clients.
+
+**Q8. Why return JSON instead of redirecting with tokens?**
+
+It avoids exposing tokens in URLs and provides a consistent REST API response.
+
+**Q9. What does `Cache-Control: no-store` do?**
+
+It instructs caches not to store the authentication response containing sensitive tokens.
+
+**Q10. Why do we need an OAuth2 failure handler?**
+
+It allows the application to return generic, safe JSON responses without exposing internal provider or implementation errors.
+
+**Q11. Does SessionCreationPolicy.STATELESS prevent temporary OAuth2 sessions?**
+
+It configures Spring Security not to use HTTP sessions as the persistent security context for API authentication. OAuth2 can still use temporary session-backed authorization-request state.
+
+**Q12. Why should provider access tokens not be returned to our frontend?**
+
+They belong to the external provider's authorization context. Our API should issue its own application tokens and expose only what the client needs.
+
+**Q13. How does a refresh token differ from an access token?**
+
+An access token authenticates API requests. A refresh token is used to obtain a new access token when the current one expires.
+
+**Q14. Why should refresh tokens be stored as hashes?**
+
+If the database is compromised, an attacker should not immediately obtain usable refresh tokens from stored records.
+
+---
+
+## 19. Phase 4.4 Completion Summary
+
+Phase 4.4 completes the social-login token integration.
+
+Our application now has a shared authentication architecture:
+
+- Email/password login.
+- Google login.
+- GitHub login.
+
+All three resolve a local user and use the existing token-generation and refresh-token lifecycle implementation.
+
+The next milestone is a final authentication integration and hardening review.
+
+**Next: Phase 4.5 — Authentication Integration Review and Security Hardening.**
+
+---
+
+# Phase 4.5 — Authentication Integration Review and Security Hardening
+
+## 1. Review Scope and Outcome
+
+This phase reviewed the existing local, JWT, refresh-token, password-reset, Google OIDC, GitHub OAuth2, session-state, CORS, rate-limiting, configuration, and test implementations. It did not add Task CRUD, account linking, new providers, or a new token architecture.
+
+The review confirmed a shared local-user and application-token model for local and social sign-in. It also identified consistency and deployment-hardening work:
+
+- Local email-based operations now normalize email input and use case-insensitive lookup, consistent with social identity mapping. This prevents case variants from being treated as unrelated identities by authentication and reset flows.
+- Login input validation is bounded, including the BCrypt-compatible password byte-length constraint.
+- OAuth2's temporary session cookie has explicit HttpOnly, SameSite, timeout, and Secure settings. Secure cookies are enabled in the production profile; local development can use HTTP.
+- Tests cover case-insensitive identity behavior, cookie configuration, OAuth state rejection, and the separation between temporary OAuth state and REST bearer authentication.
+
+These are targeted consistency and hardening changes, not a claim that the service is production-secure without deployment-specific controls.
+
+## 2. Shared Authentication Architecture
+
+The reviewed flow is:
+
+```text
+Local email/password ─┐
+Google OIDC ──────────┼─> Local User ─> JwtService + RefreshTokenLifecycleService
+GitHub OAuth2 ────────┘                    └─> LoginResponse
+```
+
+Local login authenticates the local account. Google and GitHub authenticate an external identity, which is mapped to a local user through `SocialAccountService`. Successful paths use the application's existing JWT and refresh-token issuance; provider credentials are not the application's API tokens. The OAuth2 success handler returns the existing JSON response rather than placing tokens in a URL.
+
+The source and tests were reviewed for disabled-user handling, token issuance consistency, generic OAuth failures, and non-cacheable authentication responses. OAuth2 tests use mocked provider data rather than contacting Google or GitHub.
+
+## 3. JWT and Access-Token Findings
+
+The JWT service explicitly signs with HS256 and validates the signature, configured issuer, expiration, issue time, and subject. The configured secret is Base64-decoded, must contain at least 32 bytes, and has no production fallback secret. The bearer filter resolves the local user and rejects missing or disabled users; malformed and invalid tokens do not authenticate.
+
+Access tokens are stateless. Logout and password changes revoke refresh sessions but cannot immediately invalidate an already-issued access token. The configured access-token lifetime bounds this exposure; account disablement is checked when protected requests resolve the user. No token blacklist was introduced.
+
+## 4. Refresh Tokens and Password Authentication
+
+Refresh tokens are generated with secure randomness. Only SHA-256 hashes are persisted; refresh operations hash the presented token for lookup, check expiry and user status, and lock the persisted token while rotating it. Reuse detection revokes the relevant token family. Logout is session/family-scoped, and password changes and resets revoke refresh sessions.
+
+Passwords use BCrypt, are not returned in response DTOs, and OAuth-only users do not authenticate using a predictable placeholder password. Reset tokens are hashed at rest, expire, and are processed as single-use values under a database lock. The user-facing reset response is generic.
+
+### Password-reset delivery limitation
+
+No production `PasswordResetTokenDelivery` adapter is configured. Without an adapter, a reset request can return its generic response without delivering a usable reset link. Production deployment must configure a delivery channel before enabling password reset for users.
+
+## 5. OAuth2 State, Sessions, CSRF, and CORS
+
+The API uses stateless security-context handling and bearer tokens for protected REST requests. OAuth authorization requests are the exception: a temporary session-backed repository retains the authorization request and `state` across the provider redirect. State is validated on callback; a missing or mismatched state fails before the success handler can issue application tokens. The session is not the REST authentication credential.
+
+The OAuth session timeout is 10 minutes. Its cookie is HttpOnly and SameSite=Lax; Secure is configurable for local development and enabled in production. Deployments behind TLS-terminating proxies should correctly forward secure-request information.
+
+CSRF is disabled for the REST API because the API's access and refresh credentials are sent in authorization headers or request bodies, not ambient authentication cookies. OAuth2 callback state remains enabled as the redirect-flow CSRF defense. Revisit this decision if authentication credentials are moved to cookies.
+
+CORS uses explicit configured origins, allows the required API methods and `Authorization`/`Content-Type` headers, and does not enable credentialed cross-origin requests. Existing headers include content-type sniffing protection, frame denial, a strict referrer policy, and HSTS. A CSP was not added to this JSON API; HSTS deployment behavior depends on correct HTTPS and proxy configuration.
+
+## 6. Provider Identity and Provisioning
+
+Google identity mapping uses the OIDC subject and requires a verified email. GitHub mapping uses the stable provider ID and obtains an appropriately verified email rather than trusting an arbitrary public profile email. Provider identity uniqueness, email-collision protection, and concurrent provisioning controls are part of the existing mapping implementation. Account linking was not added.
+
+The success path issues only application tokens. OAuth2 failures use a generic JSON response and do not expose provider exceptions or issue tokens. No real provider credentials or network calls are required by the test suite.
+
+## 7. Rate Limiting
+
+Login and reset-request rate limiting is bounded and synchronized in-process. Blocked buckets are not evicted in a way that simply resets an active limit. The limiter uses per-process state, so it resets on restart and does not coordinate across application instances; production multi-instance deployments need a shared rate-limit store or an upstream gateway policy. Fixed-slot collisions can conservatively cause unrelated identities to share a limit.
+
+## 8. Configuration and Database Deployment
+
+JWT and OAuth client secrets and production database credentials are externally configured; no production signing-secret fallback is present. The production profile validates the schema rather than creating it, and H2 console exposure is not part of production configuration.
+
+**Migration readiness is incomplete:** no Flyway/Liquibase framework or production migration was found. Before deploying with schema validation, provide migrations for the authentication tables, including `oauth_accounts` with its local-user foreign key, provider identity uniqueness `(provider, provider_user_id)`, user index, provider enum representation, and creation timestamp, as well as refresh-token and password-reset tables. Check existing user data for email values that differ only by case before deploying case-insensitive identity behavior.
+
+## 9. Verification and Test Coverage
+
+The reviewed and added tests cover local authentication regressions, mixed-case email lookup/duplicate checks/reset lookup, bounded login inputs, OAuth cookie settings, missing/mismatched OAuth state, and temporary-session isolation from protected bearer-authenticated API requests. Existing tests also exercise JWT validation, refresh rotation/reuse/concurrency, password reset, disabled users, CORS preflight, and OAuth2 token issuance. Provider behavior is mocked.
+
+The targeted authentication/security test selection passed after the Phase 4.5 changes. The final Java 21 `clean test` result for this phase must be checked when executing the complete suite; the earlier Phase 4.4 result does not substitute for that run.
+
+## 10. Known Limitations and Production Recommendations
+
+- Stateless access tokens remain usable until expiry after logout or password change; keep their lifetime limited and document this behavior.
+- Configure and test a production password-reset delivery adapter.
+- Apply reviewed database migrations before using production schema validation.
+- Use a distributed rate limiter or gateway policy for multi-instance deployments.
+- Verify proxy forwarding and HTTPS cookie/HSTS behavior in the actual deployment topology.
+- Externalize secrets and rotate them through the deployment secret manager; do not log credentials, tokens, or provider responses containing sensitive data.
+- Passing tests are evidence for covered behavior, not proof of complete production security.
+
+## 11. Important Interview Questions
+
+**Why do all login methods resolve a local user?** Application authorization and token subjects must use one stable identity model, regardless of which mechanism authenticated the user.
+
+**Why can an OAuth2 authorization flow use a session in a stateless API?** The session temporarily stores authorization-request state for the redirect callback; subsequent API requests still authenticate with bearer JWTs.
+
+**Why are refresh tokens hashed but access tokens not stored?** Refresh tokens are long-lived secrets that require server-side lifecycle control. Access JWTs are validated cryptographically and remain valid until expiry unless additional revocation infrastructure is introduced.
+
+**Why does disabling a user not instantly invalidate an already-issued JWT?** Stateless tokens are not centrally tracked. This implementation checks the local user's enabled state on requests, but other account changes do not otherwise revoke a token's signature or expiry.
+
+**Why is an OAuth2 state check still necessary when CSRF is disabled for API routes?** The external browser redirect is a distinct flow; state binds the callback to the authorization request initiated by the client.
+
+**What must be completed before production deployment?** Apply versioned schema migrations, configure reset-token delivery and distributed rate limiting as required, and validate HTTPS/proxy, secret, and cookie settings in the target environment.
+
+---
+
+# Phase 5.1 — Authenticated User Context and Secure Task Management Foundation
+
+## 1. Scope
+
+This phase establishes authenticated-user resolution and owner-scoped task persistence/service operations. It does not add a Task controller, REST endpoints, task DTOs, pagination, sorting, or new authentication behavior. Existing task entity mappings remain unchanged.
+
+## 2. Authentication and the SecurityContext
+
+Spring Security stores the request's authenticated `Authentication` in its `SecurityContext`. The JWT filter validates the bearer token, loads the local account through `TaskManagerUserDetailsService`, and sets a `UsernamePasswordAuthenticationToken` whose principal is Spring Security `UserDetails`. That user-details username is the normalized local email, available through `Authentication.getName()`.
+
+Task operations accept the request's `Authentication` explicitly. `CurrentUserService` rejects null, unauthenticated, anonymous, or blank identities, normalizes the email, resolves the local `User` using a case-insensitive repository lookup, and rejects missing or disabled users. It does not assume the JWT contains a database ID and does not cast the principal to an OAuth-specific type. Social logins continue to use their existing flow; their issued application JWT resolves the same local email through the normal bearer filter on subsequent API requests.
+
+## 3. User-Scoped Database Access and Ownership
+
+Task persistence queries used for user-facing operations require the owner ID in the database predicate:
+
+- `findAllByUserId(userId)` lists only that user's tasks.
+- `findByIdAndUserId(taskId, userId)` retrieves a task only when both identifiers match.
+- `existsByIdAndUserId(taskId, userId)` checks ownership without a global task lookup.
+- Status and title search repository shapes, where present, also require user ID.
+
+The service resolves the user from the trusted authentication and passes the resulting local user ID to these repository methods. It does not accept a client-provided user ID, query all tasks and filter in Java, or perform task updates/deletes by task ID alone. A missing task and another user's task both result in the same not-found behavior, avoiding disclosure that another user's task exists.
+
+Task creation attaches the resolved local user. Updates change task fields only and never reassign the owner. Deletion first retrieves the task using both task and owner IDs.
+
+## 4. Responsibilities, Transactions, and Data Exposure
+
+`CurrentUserService` translates a trusted Spring Security identity into the local user entity. `TaskRepository` enforces ownership in persistence predicates. `TaskService` coordinates those components and retains transaction boundaries: creation, update, and deletion are transactional; reads are read-only transactional operations.
+
+The service currently returns entities for internal use because there is no Task REST controller in this milestone. A later API layer must map entities to response DTOs and must not serialize `User` or expose password hashes. The Task mapping remains a mandatory lazy `ManyToOne` to User, with a non-null `user_id`, string enum persistence, timestamp callbacks, and no cascade relationship added.
+
+## 5. Isolation Tests
+
+Unit tests verify authentication validation, normalized lookup, missing/disabled-user rejection, and the task service's use of owner-scoped repository operations. H2 tests create separate users and tasks, verify each owner sees only their task, and verify one user's get/update/delete attempts against another user's task use not-found behavior and leave the other task unchanged. Tests also verify task ownership persists through an update.
+
+## 6. Future API and CORS Requirement
+
+No CORS methods were changed in Phase 5.1. When task HTTP endpoints are introduced, update the configured allowed methods to include the methods actually used by those endpoints, including `PUT`, `PATCH`, and `DELETE` as applicable, and test preflight behavior. Keep origins explicit and do not enable credentialed requests unless the credential transport requires them.
+
+## 7. Important Interview Questions
+
+**Why use `Authentication.getName()` rather than a user ID from the request?** The authentication was established by the security filter from a verified token; a request-supplied ID is attacker-controlled and could select another user's data.
+
+**Why resolve the local User from the authenticated email?** The JWT principal contains the local email identity, not necessarily a database ID. The repository lookup converts that trusted identity into the entity needed by internal persistence operations.
+
+**Why include owner ID in the database query?** Database-level scoping prevents another user's row from being loaded or modified and avoids relying on application-side filtering after a global query.
+
+**Why return not found for a task owned by someone else?** It provides the same observable result as a nonexistent task, reducing task-existence disclosure.
+
+**Why does an update leave ownership unchanged?** Ownership is assigned at creation from the authenticated user; mutable task fields must not allow a client or service caller to transfer a task to another account.
+
+**Why should a future controller return DTOs rather than JPA entities?** DTO mapping controls the API contract and prevents accidental exposure of internal relationships or sensitive user fields such as password hashes.
+
+**Which CORS change accompanies future task routes?** Add only the required HTTP methods, such as `PUT`, `PATCH`, and `DELETE`, and validate the corresponding preflight requests without broadening allowed origins unnecessarily.
+
+---
+
+# Phase 5.2 — Task REST API, DTOs, Validation, and Exception Handling
+
+## 1. REST Resources and Routes
+
+Tasks are exposed as resources under `/api/v1/tasks`. The route identifies the resource collection or a task by ID; ownership is derived from the authenticated identity, not from URL or request data.
+
+| Method and route | Operation | Success |
+|---|---|---|
+| `POST /api/v1/tasks` | Create a task for the authenticated user | `201 Created` |
+| `GET /api/v1/tasks` | List that user's tasks | `200 OK` |
+| `GET /api/v1/tasks/{taskId}` | Retrieve one owned task | `200 OK` |
+| `PUT /api/v1/tasks/{taskId}` | Replace the editable fields of an owned task | `200 OK` |
+| `DELETE /api/v1/tasks/{taskId}` | Delete an owned task | `204 No Content` |
+
+`POST` creates a resource, `GET` reads it, `PUT` updates it, and `DELETE` removes it. Authentication is required for every task route. A task missing from the current user's scope returns `404`, whether it does not exist or belongs to someone else.
+
+## 2. Controller, DTOs, and Mapping
+
+`TaskController` is a thin HTTP adapter: it accepts the request, obtains Spring Security's `Authentication`, calls the existing owner-secured `TaskService`, and maps results to response DTOs.
+
+`CreateTaskRequest` contains `title`, optional `description`, and optional `dueDate`. New tasks start in `PENDING`. `UpdateTaskRequest` contains the editable fields and a required `TaskStatus`. Neither request accepts a user ID or owner. Both use `LocalDate` for the due date.
+
+`TaskResponse` contains only `id`, `title`, `description`, `status`, `dueDate`, `createdAt`, and `updatedAt`. `TaskResponse.from(Task)` performs the entity-to-response mapping. The API never serializes `Task` or `User` directly.
+
+Why separate DTOs from JPA entities?
+
+- Entity changes and lazy relationships should not implicitly change the public API.
+- A `User` relationship could expose internal user information, including password hashes if entity serialization were expanded.
+- Request fields must not allow clients to set internal values such as task ownership or persistence timestamps.
+
+## 3. Bean Validation and Request Parsing
+
+The controller uses `@Valid` on both request DTOs. Title validation uses `@NotBlank` and `@Size(max = 255)`. Description is limited to 255 characters, matching the entity's default string-column length. Updates require a non-null status; Jackson maps recognized values to `TaskStatus` and rejects unknown enum values. Invalid `LocalDate` values and malformed JSON are rejected during request parsing.
+
+Bean Validation distinguishes constraints:
+
+- `@NotBlank` rejects null, empty, or whitespace-only text.
+- `@Size` limits the length of text.
+- `@NotNull` requires a value, including the update status.
+
+Validation and request parsing errors return `400 Bad Request` with a common JSON structure and safe field details. They do not expose framework parsing exceptions.
+
+## 4. ResponseEntity and HTTP Errors
+
+The creation and deletion endpoints use `ResponseEntity` to express `201 Created` and `204 No Content`. Reads and updates return DTOs directly, which Spring serializes as `200 OK`.
+
+`TaskExceptionHandler` is a controller-scoped `@RestControllerAdvice`. Its `@ExceptionHandler` methods translate:
+
+- Validation errors into `400` with field details.
+- Malformed JSON, invalid dates, and invalid enum values into `400`.
+- `EntityNotFoundException` into a generic `404 Task not found.` response.
+- Unexpected task-controller failures into a logged server error and generic `500` response.
+
+Responses use the existing `ApiErrorResponse` fields: timestamp, numeric status, reason phrase, safe message, request path, and details. Authentication failures (`401`) and access denials (`403`) remain the responsibility of the existing Spring Security entry point and access-denied handler; the task advice does not duplicate those handlers or disclose exception internals.
+
+## 5. Ownership, Authentication, and Authorization
+
+The JWT filter validates the bearer token and populates the `SecurityContext`. The controller receives the authenticated `Authentication`; `CurrentUserService` resolves `Authentication.getName()` to the enabled local user. The service passes that user's database ID to owner-scoped repository queries.
+
+Authentication answers “who is making the request?” Authorization answers “may this user operate on this task?” Every task service operation retains the Phase 5.1 ownership check. Client-supplied `userId` or nested owner data is not used to set ownership. Create assigns the resolved user; update changes task fields only. Get, update, and delete queries constrain both task ID and owner ID.
+
+## 6. CORS and Security
+
+The existing stateless JWT security, OAuth2 flow, authentication handlers, and CSRF decision are unchanged. Task routes remain protected by the existing `anyRequest().authenticated()` rule.
+
+CORS now allows only the methods implemented by these routes: `GET`, `POST`, `PUT`, `DELETE`, and `OPTIONS`. A browser preflight `OPTIONS` request announces the intended method and headers before the actual cross-origin request; tests verify preflight for `PUT` and `DELETE`. Origins remain explicit and credentialed CORS remains disabled.
+
+## 7. Testing
+
+`TaskControllerIntegrationTest` exercises authenticated HTTP requests through MockMvc and the real Spring application/H2 database. It covers the full CRUD status/response contract, request validation, malformed dates and enum values, missing tasks, unauthenticated access, CORS preflight, DTO field exposure, and two-user ownership isolation. The two-user case verifies a forged owner field does not change task ownership and that another user's failed update/delete leaves the task unchanged.
+
+Service and repository tests continue to verify owner-scoped query behavior and task ownership persistence. Controller tests validate HTTP translation and serialization; service/repository integration tests validate database predicates and multi-user isolation. Both layers matter because a controller-only mock test cannot prove database ownership enforcement.
+
+## 8. Important Interview Questions
+
+**Why use resource-oriented URLs?** They identify the task collection or a specific task independently from the HTTP operation performed on it.
+
+**Why return `201` from task creation and `204` from deletion?** `201 Created` signals successful resource creation; `204 No Content` signals successful deletion without an unnecessary response body.
+
+**Why use request and response DTOs instead of entities?** DTOs control accepted input and public output, protect internal fields, and decouple the REST contract from persistence mappings.
+
+**What does `@Valid` do?** It asks Spring to run the Bean Validation constraints declared on the request DTO before the controller processes it.
+
+**How are invalid enum values handled?** Jackson cannot deserialize an unknown value to `TaskStatus`; the request parsing exception is mapped to a generic `400` response.
+
+**What is the role of `@RestControllerAdvice`?** It centralizes controller exception-to-HTTP-response mapping while returning response objects as JSON.
+
+**Why use a generic 404 for another user's task?** It avoids telling a caller that a task exists outside their ownership scope.
+
+**Why must an OPTIONS preflight be allowed?** Browsers may send it to ask whether a cross-origin request using methods such as `PUT` or `DELETE` is permitted before sending that request.
+
+**Why is an authenticated user not automatically authorized for every task?** Authentication identifies the caller; owner-scoped service and repository operations enforce authorization for each resource.
+
+**Were pagination, search, PATCH, or task ownership transfer implemented?** No. Those features are outside Phase 5.2; only the defined CRUD routes and owner-scoped behavior are included.
+
+# Phase 5.3 — Pagination, Sorting, Searching, and Filtering
+
+## 1. Why list endpoints need pagination
+
+Pagination splits a large collection into manageable slices. Returning every task at once consumes database, server, network, and client memory, and response time grows with the owner's data. The task listing endpoint therefore asks the database for one requested page instead of loading all matching tasks and slicing them in Java.
+
+For example, `GET /api/v1/tasks?page=0&size=10` requests the first ten tasks. Page numbers start at zero. If parameters are omitted, page `0`, size `10`, `createdAt` descending are used. Page sizes must be between 1 and 100; invalid values are rejected with `400 Bad Request` rather than silently changed.
+
+## 2. Spring Data pagination types
+
+`Pageable` describes a requested page, page size, and ordering. The service builds it using `PageRequest.of(page, size, sort)`. The repository accepts that `Pageable` and returns `Page<Task>`, which includes the current database results and metadata such as total elements, total pages, and whether the page is first or last. Spring Data applies the limit and offset in the database query; it does not fetch every task and paginate in application memory.
+
+Offset-based pagination is straightforward and fits this API: page 2 with size 10 represents an offset of 20. Very deep offsets can become expensive for large tables; cursor/keyset pagination may be a later optimization if measured usage justifies the extra complexity.
+
+## 3. Sorting
+
+The endpoint accepts `sortBy` and `direction`, for example `GET /api/v1/tasks?page=0&size=10&sortBy=title&direction=asc`. Supported fields are `createdAt`, `updatedAt`, `dueDate`, `title`, and `status`. Direction is `asc` or `desc`, case-insensitively. Defaults are `createdAt` and `desc`.
+
+The service validates the sort field against a fixed allowlist before constructing Spring Data `Sort`; arbitrary client input never becomes a SQL fragment. An ascending sort places values in increasing order and a descending sort reverses that order. The service adds task `id` as a stable tie-breaker so tasks with equal primary sort values have deterministic ordering across page requests.
+
+## 4. Search and filters
+
+`search` performs a case-insensitive partial match against the task title. For example, `?search=assignment` matches titles containing that word regardless of letter case. Search text is trimmed; a missing or blank value turns off the search condition. `status` accepts the existing `PENDING`, `IN_PROGRESS`, or `COMPLETED` enum value. Unknown values are rejected as `400 Bad Request`.
+
+The API also accepts inclusive ISO date bounds `dueFrom=YYYY-MM-DD` and `dueTo=YYYY-MM-DD`. Either bound can be provided independently; when both are supplied, `dueFrom` must not be after `dueTo`. Search, status, due-date bounds, sorting, and pagination can be combined in one request.
+
+The repository uses one JPQL query with optional conditions instead of separate query methods for every filter combination. Its mandatory predicate is `task.user.id = :userId`; every optional condition is combined with this owner predicate. This keeps pagination totals and content restricted to the authenticated user. Empty search and missing filters do not create global, unscoped task queries.
+
+## 5. Stable response DTO
+
+The controller does not serialize `Page<Task>` or the JPA entity. `TaskPageResponse` maps each page content item through the existing `TaskResponse` and returns `content`, `pageNumber`, `pageSize`, `totalElements`, `totalPages`, `first`, `last`, and `empty`. This provides clients with a stable JSON shape while keeping persistence objects and the user relationship private.
+
+Example request:
+
+```text
+GET /api/v1/tasks?page=0&size=10&sortBy=createdAt&direction=desc&search=assignment&status=PENDING
+```
+
+## 6. Ownership and authorization
+
+The endpoint does not accept a user ID. `CurrentUserService` resolves the authenticated principal, then the service passes that user's database ID to `TaskRepository.findOwnedTasks`. Search matches or status filters cannot widen access: the owner condition is always present, including in the database count query used to calculate `totalElements`. The same ownership boundary continues to apply to get, update, and delete operations.
+
+Authentication answers who made the request; authorization answers which resources that identity may access. A valid JWT does not grant access to another user's tasks. Tests use two users to verify that content, search results, status results, and pagination totals remain isolated.
+
+## 7. Testing and performance
+
+Repository tests verify that filtering and totals are owner-scoped at the database layer. Service tests verify the sort allowlist, page bounds, and that only the resolved user ID is used. MockMvc integration tests exercise the real HTTP parameter conversion, JSON response metadata, pagination, sorting, combined search/status/date filters, invalid values, and two-user isolation against H2.
+
+Database-side filtering and paging avoids holding an owner's entire task collection in application memory. The configured maximum page size limits accidental or abusive oversized responses. For production data volumes, indexes should be selected from actual query plans and workload measurements; this milestone does not add schema or database migrations.
+
+## 8. Common interview questions
+
+**What is the difference between `Page` and `Pageable`?** `Pageable` describes what to fetch; `Page` contains the fetched content and metadata about the complete matching result.
+
+**Why use `PageRequest`?** It is Spring Data's concrete request implementation and combines page number, size, and `Sort` in a type the repository understands.
+
+**How is pagination applied?** The repository receives the `Pageable`, so Spring Data generates database-level offset/limit behavior and a count for matching rows rather than loading all results first.
+
+**Why validate sort fields?** Sorting is built from entity property names. An allowlist makes the API intentional and prevents arbitrary input from being treated as a dynamic query property.
+
+**How are optional filters combined?** The repository query includes each filter only when its parameter is non-null, while always retaining the authenticated owner's ID predicate.
+
+**Why not return `Page<Task>` directly?** It exposes persistence-oriented types and can leak entity relationships or make the API contract depend on Spring Data. A dedicated page DTO returns only deliberate public fields and metadata.
+
+**Can searching return a different user's task?** No. The case-insensitive title condition is applied alongside the mandatory `task.user.id` condition, so matching is always owner-scoped.
+
+**What is a limitation of offset pagination?** Large offsets can be costly and concurrent inserts can shift later pages. Cursor/keyset pagination can help for high-volume use, but is not part of this phase.
+
+# Phase 5.4 — Task Priority Management
+
+## 1. Priority as a Java enum
+
+`TaskPriority` represents the finite set of task importance labels: `LOW`, `MEDIUM`, `HIGH`, and `URGENT`. An enum is safer than accepting arbitrary strings because Java and Jackson can only map recognized constants. Each task has one non-null priority.
+
+The JPA entity maps it with `@Enumerated(EnumType.STRING)`. This stores readable names such as `HIGH` in the database, rather than ordinal numbers. String storage avoids changing the meaning of existing rows if enum constants are reordered in source. Adding or renaming values still requires an appropriate production schema/data migration strategy.
+
+## 2. Defaults and update semantics
+
+New tasks default to `MEDIUM`: the entity initializes that value and its constructor uses it when no priority is supplied; the service applies the same default for optional create input. The database column is non-null. A create request may omit `priority` or provide any valid enum value.
+
+The API uses `CreateTaskRequest` and `UpdateTaskRequest`, not entities. Create priority is optional; update priority is required because `PUT` is a full update in this API. `@NotNull` rejects a missing update priority through the existing validation error format. Unknown priority strings in JSON are rejected during request deserialization with `400 Bad Request`. Task ownership is still derived from the authenticated user and is not accepted in either DTO.
+
+`TaskResponse` now includes the `priority` value while continuing to expose only approved API fields. User entities, password hashes, refresh tokens, and persistence internals remain excluded.
+
+## 3. Filtering and sorting
+
+The task listing endpoint accepts an optional `priority` query parameter. For example:
+
+```text
+GET /api/v1/tasks?priority=HIGH&status=PENDING&search=assignment&page=0&size=10
+```
+
+Priority filtering composes with the existing status, case-insensitive title, and inclusive due-date filters. The repository query applies all provided conditions together and always includes the authenticated owner's ID. Spring Data continues to apply pagination and ordering in the database, and its total count uses the same filters and owner condition. Omitting priority leaves tasks at all priority levels eligible.
+
+`priority` is now an approved `sortBy` field as well. Since the entity stores enum names as strings, the database orders them by the database's string collation—not by business urgency. With the usual case-sensitive lexical ordering of these uppercase names, ascending order is `HIGH`, `LOW`, `MEDIUM`, `URGENT`; do not infer that this is a business ranking. The service retains the task ID ascending tie-breaker for deterministic ordering among equal priorities.
+
+An invalid `priority` query value is rejected as a client error using the existing task API exception response. No dynamic SQL is constructed from the input; the service's sort allowlist remains in force.
+
+## 4. Testing and interview notes
+
+Repository tests persist and reload every enum value, check enum sorting, combine priority with status and title search, verify page totals, and include another user's matching task to prove owner isolation. Service tests verify the `MEDIUM` default, explicit priority assignment, priority updates, allowed sorting, and owner resolution. MockMvc integration tests verify create/update/response behavior, all priority filters, combined filters, page counts, enum sorting, invalid values, and two-user isolation.
+
+**Why use `EnumType.STRING` instead of `EnumType.ORDINAL`?** String names remain associated with the same meaning if constants are reordered; ordinals could silently change meaning. Renaming a constant still requires data migration care.
+
+**Does sorting by enum produce a priority ranking?** No. This endpoint sorts the persisted enum names according to database string collation. A business-defined ranking would require explicit ranking logic or a separate sort key.
+
+**Why make update priority required but create priority optional?** Create has a defined default (`MEDIUM`), whereas a full `PUT` should provide the complete task state so the caller does not accidentally retain or omit a field.
+
+**Can a priority filter reveal another user's tasks?** No. Priority is only an additional predicate; every result and total remains constrained by the authenticated user's ID.
+
+
+----------------------------------------------------------------------------------------
+
+# Phase 5.4 — Task Priority Management: Learning Concepts
+
+**Project:** Task Management REST API  
+**Stack:** Java 21, Spring Boot 3.5.7, Spring Data JPA, Hibernate, Spring Security
+
+---
+
+## 1. Java Enums
+
+An enum is a Java type that represents a fixed set of named constants.
+
+Example:
+
+    public enum TaskPriority {
+        LOW,
+        MEDIUM,
+        HIGH,
+        URGENT
+    }
+
+Use an enum when a field must contain one value from a known set.
+
+Compared with a String, an enum:
+- Prevents arbitrary values from being assigned in ordinary Java code.
+- Provides compile-time type safety.
+- Makes code more readable.
+- Represents a clearly defined set of possible values.
+
+Example:
+
+    private TaskPriority priority;
+
+`TaskPriority.valueOf("HIGH")` converts a matching string into an enum constant. An unknown name throws `IllegalArgumentException`.
+
+JSON frameworks such as Jackson commonly serialize enum values using their names, such as `"HIGH"`.
+
+**Interview point:** Enums are appropriate for fixed domain choices such as task status, priority, payment state, and account type.
+
+---
+
+## 2. Persisting Enums with JPA
+
+Use `@Enumerated` to define how JPA stores an enum.
+
+Example:
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private TaskPriority priority;
+
+With `EnumType.STRING`, the database stores names such as LOW, MEDIUM, HIGH, and URGENT.
+
+### EnumType.STRING vs EnumType.ORDINAL
+
+| Mapping | Stored value | Consideration |
+|---|---|---|
+| EnumType.ORDINAL | Numeric position, such as 0 or 1 | Reordering constants can change the meaning of existing data |
+| EnumType.STRING | Name, such as HIGH | Renaming a constant requires data migration |
+
+For business values, STRING is generally easier to inspect and less dependent on declaration order.
+
+It does not, however, define a custom business ranking.
+
+**Important:** Prefer `EnumType.STRING` for values such as task priority and task status because it avoids depending on the declaration position of enum constants.
+
+---
+
+## 3. Defaults and Nullability
+
+A Java enum field is initially null unless the application assigns a value.
+
+An entity-level default can be expressed as:
+
+    private TaskPriority priority = TaskPriority.MEDIUM;
+
+A service can also apply a default during creation:
+
+    TaskPriority priority = request.priority() == null
+        ? TaskPriority.MEDIUM
+        : request.priority();
+
+### Difference between default and nullability
+
+- Java/entity default: Assigned by application code.
+- Database default: Assigned by the database when an insert omits the column.
+- `@Column(nullable = false)`: Declares a non-null constraint; it does not assign MEDIUM.
+
+Choose a consistent defaulting strategy.
+
+If multiple creation paths exist, ensure all of them produce a valid priority.
+
+If a database migration is later introduced, existing rows must be backfilled before a new non-null constraint is enforced.
+
+**Important:** `nullable = false` and a default value solve two different problems.
+
+---
+
+## 4. DTOs and API Contracts
+
+DTOs define the data accepted or returned by the API.
+
+They keep the external API contract separate from persistence entities.
+
+### Create request example
+
+    public record CreateTaskRequest(
+        String title,
+        String description,
+        TaskPriority priority,
+        LocalDate dueDate
+    ) {}
+
+### Update request example
+
+    public record UpdateTaskRequest(
+        String title,
+        String description,
+        TaskStatus status,
+        TaskPriority priority,
+        LocalDate dueDate
+    ) {}
+
+### Why can Create and Update behave differently?
+
+- Create request: Priority may be omitted, and the application can default it to MEDIUM.
+- Update request: A full update (PUT) may require the client to provide priority explicitly.
+- Partial update (PATCH): An omitted field should generally remain unchanged rather than being reset to a default.
+
+Document what omission means for each endpoint.
+
+Do not let clients choose task ownership by supplying `userId`. Ownership comes from the authenticated principal and server-side service logic.
+
+---
+
+## 5. Response DTO Mapping
+
+A response DTO can expose priority without exposing the JPA entity.
+
+Example:
+
+    public record TaskResponse(
+        Long id,
+        String title,
+        TaskStatus status,
+        TaskPriority priority,
+        LocalDate dueDate
+    ) {}
+
+The mapper copies:
+
+    task.getPriority()
+
+into the response.
+
+### Benefits of DTOs
+
+- The API returns only intended fields.
+- JPA relationships are not serialized accidentally.
+- Internal entity changes do not automatically become API changes.
+- Sensitive fields such as password hashes and refresh-token data remain outside task responses.
+
+---
+
+## 6. Optional Query Parameters and Spring MVC
+
+A list endpoint can accept priority as an optional query parameter.
+
+Example:
+
+    @RequestParam(required = false) TaskPriority priority
+
+### API examples
+
+    GET /api/v1/tasks
+
+    GET /api/v1/tasks?priority=HIGH
+
+    GET /api/v1/tasks?priority=URGENT&status=PENDING
+
+When a matching enum name is supplied, Spring MVC converts the query string into the corresponding enum value.
+
+For example:
+
+    priority=HIGH
+
+becomes:
+
+    TaskPriority.HIGH
+
+An invalid value such as:
+
+    priority=SUPER_HIGH
+
+cannot be converted and should produce the application's established client-error response.
+
+**Important:** Query-parameter conversion and request-body JSON deserialization are separate input paths. Test invalid enum values in both places if both accept priority.
+
+---
+
+## 7. Combining Optional Repository Filters
+
+The priority predicate in JPQL can follow this pattern:
+
+    (:priority is null or task.priority = :priority)
+
+### How does it work?
+
+- If priority is null, the priority predicate does not restrict the results.
+- If priority is HIGH, only HIGH-priority tasks match.
+
+It should combine with the existing owner, status, title, and due-date predicates.
+
+### Owner predicate
+
+The owner predicate is mandatory:
+
+    task.user.id = :userId
+
+### Complete logical condition
+
+    owner matches
+
+    AND (priority absent OR priority matches)
+
+    AND (status absent OR status matches)
+
+    AND (title absent OR title matches)
+
+    AND (due-date lower bound absent OR due date is on/after it)
+
+    AND (due-date upper bound absent OR due date is on/before it)
+
+Both the page-content query and count query must preserve the owner restriction and all active filters.
+
+Otherwise, page metadata may be inaccurate or disclose information about another user's tasks.
+
+### Page and Pageable
+
+A Spring Data repository method returning `Page<Task>` can accept a `Pageable`.
+
+A Page includes:
+
+- Current page content.
+- Page number.
+- Page size.
+- Total matching elements.
+- Total pages.
+- First/last/empty metadata.
+
+---
+
+## 8. Enum Sorting vs Business-Priority Sorting
+
+A pageable request may allow:
+
+    GET /api/v1/tasks?sortBy=priority&direction=asc
+
+Do not assume that database sorting of enum values equals business importance.
+
+### Technical sorting
+
+Follows the database's comparison of the persisted representation.
+
+### Business sorting
+
+Follows a deliberate order, for example:
+
+    URGENT → HIGH → MEDIUM → LOW
+
+With string persistence, alphabetical ordering may not match urgency.
+
+If the product requires a business order, implement it explicitly, for example with:
+- JPQL/SQL CASE expression.
+- A dedicated numeric rank.
+- Another explicitly defined sorting strategy.
+
+Document and test that behavior.
+
+### Sort-field allow-list
+
+Keep a sort-field allow-list in the service.
+
+It prevents clients from sorting by arbitrary entity properties, including internal relationships.
+
+Retain a deterministic secondary sort such as:
+
+    id ASC
+
+This ensures records with equal primary sort values have a stable order across pages.
+
+---
+
+## 9. How the Feature Flows Through Layered Architecture
+
+Typical request flow:
+
+    HTTP request
+        |
+        v
+    TaskController
+        | receives request/query parameters
+        v
+    TaskService
+        | applies defaults, validates rules,
+        | resolves current user and builds Pageable
+        v
+    TaskRepository
+        | owner-scoped page and count queries
+        v
+    Database
+        |
+        v
+    Page<Task>
+        |
+        v
+    TaskPageResponse / TaskResponse
+        |
+        v
+    HTTP response
+
+### Task creation flow
+
+1. The controller receives `CreateTaskRequest`.
+2. The service resolves the authenticated user.
+3. The service applies MEDIUM if priority was omitted.
+4. The service creates the task with the server-resolved owner.
+5. The repository persists the entity.
+6. The saved entity is mapped to `TaskResponse`.
+7. The API returns the response.
+
+Keep controllers thin.
+
+Business defaults and ownership rules belong in the service/domain layer, not in client-controlled input.
+
+---
+
+## 10. Testing Strategy
+
+Testing should cover repository, service, and controller integration layers.
+
+### Repository Tests
+
+- Save and retrieve every priority.
+- Verify string enum persistence if using EnumType.STRING.
+- Filter by priority.
+- Combine priority with status and title search.
+- Combine priority with due-date filters.
+- Verify owner isolation.
+- Verify page content and total count use the same filters and owner scope.
+
+### Service Tests
+
+- Creating without priority applies MEDIUM.
+- Creating with an explicit priority preserves it.
+- Updating changes priority according to the API contract.
+- Existing pagination, sorting, date validation, and ownership checks remain intact.
+
+### Controller Integration Tests
+
+- Valid priority is accepted in request JSON.
+- Omitted create priority gets the documented default.
+- Response JSON includes priority.
+- PUT updates priority.
+- Each priority filter works.
+- Combined filters work.
+- Invalid priority in query parameters and JSON produces the established error response.
+- Pagination metadata reflects the filtered count.
+- Cross-user isolation still holds.
+
+**Important:** Test observable behavior, not merely whether a method was called.
+
+---
+
+## 11. Common Mistakes to Avoid
+
+1. Using EnumType.ORDINAL without considering enum reordering.
+2. Assuming nullable = false creates a default value.
+3. Defaulting every update to MEDIUM and unintentionally overwriting an existing priority.
+4. Forgetting to apply filters to the count query.
+5. Dropping the owner predicate when adding a new filter.
+6. Assuming alphabetical enum order represents urgency.
+7. Allowing arbitrary sort fields.
+8. Returning JPA entities directly instead of DTOs.
+9. Testing filters individually but not in combination.
+10. Changing existing API behavior unintentionally when adding an optional field.
+
+---
+
+## 12. Interview Questions and Answers
+
+### Q1. What is an enum in Java?
+
+An enum is a special Java type that defines a fixed set of constants. It is useful for values such as task status and priority.
+
+### Q2. Why use an enum instead of a String for task priority?
+
+An enum restricts values to a predefined set and provides compile-time type safety.
+
+A String can contain arbitrary values unless carefully validated.
+
+### Q3. What is the difference between EnumType.STRING and EnumType.ORDINAL?
+
+STRING stores the enum constant's name.
+
+ORDINAL stores its numeric position.
+
+STRING is generally safer when constants may be reordered.
+
+### Q4. Does @Column(nullable = false) set a default value?
+
+No.
+
+It declares a non-null column constraint. Application code or a database default must assign the value.
+
+### Q5. Where should the default priority be applied?
+
+The application should apply it consistently, commonly during task creation in the service and/or through entity initialization.
+
+All creation paths should produce a valid value.
+
+### Q6. Why might create allow an omitted priority while update requires it?
+
+Creation can apply a documented default.
+
+A full update can require a complete representation.
+
+A partial update should leave omitted fields unchanged.
+
+### Q7. How does Spring convert priority=HIGH to an enum?
+
+Spring MVC uses its conversion facilities to convert the query string into the matching enum constant.
+
+An unknown value causes a conversion/binding error.
+
+### Q8. Why must the count query include the same filters and owner condition?
+
+The count is part of pagination metadata.
+
+If it ignores filters or counts another user's tasks, the metadata is inaccurate and may leak information.
+
+### Q9. Does sorting by an enum automatically sort by business priority?
+
+No.
+
+It follows database comparison behavior.
+
+A required business order such as URGENT, HIGH, MEDIUM, LOW must be explicitly implemented and tested.
+
+### Q10. Why keep a secondary sort field such as ID?
+
+It provides deterministic ordering when multiple tasks share the same primary sort value, making pagination more stable.
+
+### Q11. Why use a response DTO instead of returning Task?
+
+A DTO controls exposed fields, avoids accidental relationship serialization, and separates the API contract from the persistence model.
+
+### Q12. How do you prevent priority filtering from exposing another user's tasks?
+
+Include the authenticated user's ID in the repository query independently of optional filters.
+
+Obtain that ID from the security context, not the request.
+
+---
+
+## 13. Phase 5.4 Revision Checklist
+
+- [ ] TaskPriority contains the supported constants.
+- [ ] Task maps priority with EnumType.STRING.
+- [ ] Persisted priority is non-null.
+- [ ] Omitted create priority follows the documented MEDIUM default.
+- [ ] Update semantics are explicit and tested.
+- [ ] TaskResponse exposes priority but not entity relationships.
+- [ ] Priority filtering combines with existing filters.
+- [ ] List and count queries remain owner-scoped.
+- [ ] Priority sorting behavior is documented and tested.
+- [ ] Sort-field allow-list and ID tie-breaker remain intact.
+- [ ] Invalid query and JSON enum values produce consistent client errors.
+- [ ] Existing CRUD, JWT, OAuth2, and ownership tests still pass.
+- [ ] learning_concepts.md is appended to, not overwritten.
+- [ ] Full Maven test suite and git diff --check pass.
+
+---
+
+## 14. What You Should Be Able to Explain After This Phase
+
+1. Why TaskPriority is an enum.
+2. How @Enumerated(EnumType.STRING) stores enum values.
+3. Why a non-null constraint and a default value are separate concerns.
+4. How a request DTO carries an optional enum value.
+5. How Spring converts query parameters into enums.
+6. How the service applies defaults and preserves ownership.
+7. How optional filters combine in a paginated repository query.
+8. Why page-content and count queries must use the same owner scope.
+9. Why enum sorting may not equal business-priority sorting.
+10. How integration tests verify the API end to end.
+
+**Learning goal:** Be able to trace a priority value from incoming HTTP JSON/query parameters, through the controller and service, into the JPA entity and database, and back out through the response DTO.
+
+---
+
+## 15. Phase 6.1 — PostgreSQL Integration
+
+### PostgreSQL JDBC driver and DataSource
+
+The PostgreSQL JDBC driver (`org.postgresql:postgresql`) lets Spring Boot create a JDBC `DataSource` for a PostgreSQL JDBC URL. Its version comes from Spring Boot's dependency management, so the project does not pin a separate driver version. H2 remains on the runtime classpath and is still the default for local development and the normal automated test suite.
+
+Spring Boot reads the active `application-{profile}.properties` file in addition to the base `application.properties`. The `postgres` profile requires `DATABASE_URL`, `DATABASE_USERNAME`, and `DATABASE_PASSWORD`; it deliberately has no H2 fallback. If any variable is absent, configuration resolution fails at startup rather than silently selecting another database. Never put real credentials in source control.
+
+### Hibernate schema behavior
+
+`spring.jpa.hibernate.ddl-auto` controls Hibernate schema handling:
+
+- `none`: do not manage the schema.
+- `validate`: compare mapped entities with an existing schema and fail on mismatches; do not create or drop tables.
+- `update`: attempt to align an existing schema with entity mappings. This is a temporary local-development convenience, not a migration mechanism.
+- `create`: create the schema at startup, replacing existing tables as needed.
+- `create-drop`: create a schema at startup and drop it when the application stops.
+
+The H2 default retains `create-drop` for isolated development/tests. The `postgres` profile uses `update` only to make local PostgreSQL exploration practical during this phase. The existing `prod` profile uses `validate` and disables SQL output; do not deploy the local `postgres` profile as production. `create` and `create-drop` can destroy persistent production data, while `update` is not a reviewable or reliable upgrade path. This phase is **not migration-ready**: Flyway and managed schema migrations are planned for Phase 6.2.
+
+SQL statement logging is disabled in the PostgreSQL profile. H2 and PostgreSQL are both relational databases, but they differ in SQL behavior, type handling, indexes, constraints, and transaction semantics; a successful H2 test run alone does not establish PostgreSQL compatibility.
+
+### Run PostgreSQL locally (PowerShell)
+
+From the `task-management-api` directory, provide a local username and password without adding them to project files:
+
+```powershell
+$env:DATABASE_URL = "jdbc:postgresql://localhost:5432/taskmanager"
+$env:DATABASE_USERNAME = "taskmanager"
+$env:DATABASE_PASSWORD = Read-Host "Local PostgreSQL password"
+$bytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$env:JWT_SECRET = [Convert]::ToBase64String($bytes)
+$rng.Dispose()
+```
+
+The API also requires a Base64-encoded `JWT_SECRET` with at least 32 random bytes; the commands above create a local-only key in the current PowerShell session.
+
+If PostgreSQL is not already running, a local Docker database can be started using those same environment values:
+
+```powershell
+docker run --name taskmanager-postgres -e POSTGRES_DB=taskmanager -e POSTGRES_USER=$env:DATABASE_USERNAME -e POSTGRES_PASSWORD=$env:DATABASE_PASSWORD -p 5432:5432 -d postgres:16
+```
+
+Then, still from the `task-management-api` directory, start the application with the development PostgreSQL profile:
+
+```powershell
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=postgres"
+```
+
+For a non-Docker PostgreSQL server, create the database and user before starting the application. The Docker command creates them and sets the user's password for a fresh local container. Stop/remove only that named local container when finished with `docker stop taskmanager-postgres` and `docker rm taskmanager-postgres`. For a production deployment, set the same three database variables and activate the `prod` profile; it validates an existing schema instead of generating one. Do not use the example local database password as a production secret.
+
+### PostgreSQL integration testing
+
+`PostgreSqlIntegrationTest` runs against a disposable PostgreSQL container through Testcontainers and exercises Spring's PostgreSQL DataSource/JPA startup, user and task persistence, string enum round-tripping, task ownership, and filtered pagination. It is opt-in so the normal H2 test suite never requires Docker. Run the PostgreSQL test from `task-management-api` with Docker available:
+
+```powershell
+.\mvnw.cmd -Dtest=PostgreSqlIntegrationTest -DrunPostgresIntegration=true test
+```
+
+The test uses container-generated credentials and does not require production secrets. The full Maven test suite uses the H2 test configuration; the PostgreSQL test runs only when `runPostgresIntegration=true` is explicitly supplied.
+
+---
+
+## 16. Phase 6.2 — Flyway Database Migrations
+
+### Why migrations
+
+A database migration is a versioned, reviewable change to a database schema. Flyway applies migrations in order and records their outcome in `flyway_schema_history`. This replaces Hibernate's `update`/`create-drop` schema mutation with an explicit schema contract, while Hibernate `validate` checks that entity mappings agree with the migrated schema at application startup.
+
+Versioned migration files use `V<version>__<description>.sql`; versions increase and applied migrations must not be edited. This phase adds:
+
+- `V1__create_initial_schema.sql`: the five existing entity tables and their mapped constraints/indexes, representing the schema before task priority.
+- `V2__add_task_priority.sql`: adds/backfills the priority column and enforces its default, non-null, and allowed-value constraints.
+
+On a new empty H2 or PostgreSQL database, Flyway creates its history table and applies V1 followed by V2 before Hibernate initializes. The normal H2 tests use the same path. The app enables Flyway, disables automatic baseline and Flyway clean, and configures Hibernate `validate`; it does not use `update` or `create-drop` for startup. Flyway's H2 support is supplied by `flyway-core`, and PostgreSQL support by the Spring Boot-managed `flyway-database-postgresql` dependency.
+
+### Schema represented by the migrations
+
+V1 creates:
+
+- `users`: identity `BIGINT` primary key; required name, email, password hash, enabled flag and creation time; unique email.
+- `tasks`: identity key; required title, status, timestamps and owner; optional description/due date; foreign key to `users`. Priority is intentionally added in V2.
+- `oauth_accounts`: identity key; required owner, provider, provider user ID and creation time; unique `(provider, provider_user_id)`; owner foreign key and owner index. Provider is stored as a string.
+- `password_reset_tokens`: identity key; required owner, token hash, creation and expiration times; optional used time; unique token hash, owner foreign key and token-hash index.
+- `refresh_tokens`: identity key; required owner, token hash, family ID, creation/expiration times and version; optional revoked time and replaced-token ID; unique token hash, owner foreign key, and hash/family/owner indexes. `replaced_by_token_id` is a scalar mapping, not an entity relationship, so no foreign key is declared for it.
+
+The migrations use SQL `TIMESTAMP` for `LocalDateTime`, `DATE` for `LocalDate`, `BOOLEAN` for enabled, and `BIGINT` identity keys for the existing `GenerationType.IDENTITY` IDs. String enums remain `VARCHAR`; task status and OAuth provider have no database enum type. `TaskPriority` remains persisted using `EnumType.STRING`.
+
+### Existing-task priority backfill
+
+V2's actual statements are:
+
+```sql
+ALTER TABLE tasks
+    ADD COLUMN IF NOT EXISTS priority VARCHAR(255) DEFAULT 'MEDIUM';
+
+UPDATE tasks
+SET priority = 'MEDIUM'
+WHERE priority IS NULL;
+
+ALTER TABLE tasks
+    ALTER COLUMN priority SET DEFAULT 'MEDIUM';
+
+ALTER TABLE tasks
+    ALTER COLUMN priority SET NOT NULL;
+
+ALTER TABLE tasks
+    ADD CONSTRAINT ck_tasks_priority
+        CHECK (priority IN ('LOW', 'MEDIUM', 'HIGH', 'URGENT'));
+```
+
+The `IF NOT EXISTS` form also supports a verified pre-Flyway Phase 6.1 database where Hibernate `update` may already have added the priority column. Existing NULL values are explicitly backfilled, and the migration guarantees a database default, `NOT NULL`, and the four allowed string values. It does not drop tables or rewrite non-NULL priorities.
+
+### Existing database baselining
+
+Automatic baseline-on-migrate is deliberately disabled. A non-empty database without Flyway history must not be assumed to match a migration: Flyway will stop rather than silently mark it as migrated.
+
+Before adopting any existing database, take and verify a restorable backup, stop application writers, inspect the schema and data read-only, and compare every table, column, type, identity, nullability rule, foreign key, unique constraint, index, and task priority rule to the migration state. Never baseline an unknown or partial schema. The local PostgreSQL service was not inspectable during this phase because its server rejected the read-only connection without credentials; no baseline or database changes were made there.
+
+For a verified database matching the V1 base schema (the five V1 tables/columns/constraints/indexes, with no incompatible objects), set Flyway's `baselineVersion` to `1` for the one-time `baseline` operation. If that schema already has a Phase 6.1 `priority` column, verify that it is a compatible string column and has no conflicting priority constraint first. The application then applies V2, including the priority backfill and constraints.
+
+For a verified database that already exactly matches the final V2 state—including the V2 default, non-null property, and check constraint—baseline at version `2` so neither migration is replayed. A baseline only records history; it does not repair or validate a schema. Supply the JDBC URL and credentials to the Flyway CLI/API via an approved secret mechanism; do not put passwords in source control or command history. Record and inspect the resulting `flyway_schema_history` baseline row before starting the application. If a database matches neither version, stop and prepare a reviewed, database-specific reconciliation plan rather than forcing a baseline.
+
+### Migration tests
+
+`FlywayMigrationIntegrationTest` boots the application with H2, checks that Flyway applied V1/V2 and created all five entity tables, checks declared constraints and indexes, and persists/reloads a task through JPA. Since Spring's context starts Hibernate with `ddl-auto=validate`, successful startup also verifies the migrated schema against all entity mappings. It checks the stored enum string, owner-scoped repository lookup, non-null priority column, and rejection of values outside the priority enum.
+
+`TaskPriorityMigrationBackfillTest` applies V1 to a separate in-memory H2 database, inserts a pre-priority task, applies V2, and verifies that the task is `MEDIUM` and priority is non-null. Run the tests with the normal H2 suite:
+
+```powershell
+.\mvnw.cmd -Dtest=FlywayMigrationIntegrationTest,TaskPriorityMigrationBackfillTest test
+```
+
+The PostgreSQL Testcontainers test remains opt-in as described in Phase 6.1. A successful H2 migration test does not prove PostgreSQL execution; Docker/Testcontainers availability is required to verify migrations on PostgreSQL.
+
+---------------------------------------------------------------------------------
+
+# Phase 6.1 — PostgreSQL Integration
+
+## 1. Introduction
+
+Phase 6.1 introduced PostgreSQL support into the Task Management REST API while preserving the existing H2 development and test workflow.
+
+Technology stack:
+- Java 21
+- Spring Boot 3.5.7
+- Maven
+- Spring Data JPA
+- Hibernate
+- PostgreSQL
+- H2
+
+### Objectives achieved
+
+- Added PostgreSQL JDBC driver.
+- Retained H2.
+- Created `application-postgres.properties`.
+- Externalized database connection details.
+- Introduced environment-specific database configuration.
+- Added an opt-in PostgreSQL Testcontainers integration test.
+- Preserved existing authentication, authorization and task functionality.
+
+**Verification:** 135 tests passed, 0 failures, 0 errors and 1 skipped. The PostgreSQL Testcontainers test could not execute because of Docker communication issues. PostgreSQL persistence is therefore not yet verified.
+
+---
+
+## 2. H2 vs PostgreSQL
+
+### H2
+
+H2 is a lightweight relational database commonly used for development and testing.
+
+- Can run in memory.
+- Does not require a separate database server for an in-memory setup.
+- Starts quickly.
+- Useful for automated tests.
+
+Example:
+
+```properties
+spring.datasource.url=jdbc:h2:mem:taskmanagerdb
+```
+
+### PostgreSQL
+
+PostgreSQL is a full-featured relational database management system.
+
+- Runs as a database server.
+- Stores data persistently.
+- Supports transactions, constraints and indexes.
+- Suitable for production workloads.
+
+Example:
+
+```properties
+spring.datasource.url=jdbc:postgresql://localhost:5432/taskmanager
+```
+
+### Why support both?
+
+| Database | Purpose |
+|---|---|
+| H2 | Fast development and ordinary tests |
+| PostgreSQL | Local integration and production database |
+
+H2 tests do not guarantee complete PostgreSQL compatibility. PostgreSQL integration testing is also necessary.
+
+---
+
+## 3. JDBC and PostgreSQL JDBC Driver
+
+JDBC stands for Java Database Connectivity. It is the standard Java API for communicating with relational databases.
+
+A JDBC driver implements database-specific communication.
+
+PostgreSQL dependency:
+
+```xml
+<dependency>
+    <groupId>org.postgresql</groupId>
+    <artifactId>postgresql</artifactId>
+    <scope>runtime</scope>
+</dependency>
+```
+
+The driver uses Spring Boot dependency management rather than a manually specified version. The reported resolved version was `42.7.8`.
+
+### Runtime communication flow
+
+```text
+Spring Boot Application
+        |
+        v
+Spring Data JPA
+        |
+        v
+Hibernate
+        |
+        v
+JDBC / DataSource
+        |
+        v
+PostgreSQL JDBC Driver
+        |
+        v
+PostgreSQL Database
+```
+
+---
+
+## 4. DataSource Configuration
+
+A DataSource represents the application's configured source of database connections.
+
+The PostgreSQL profile contains:
+
+```properties
+spring.datasource.url=${DATABASE_URL}
+spring.datasource.username=${DATABASE_USERNAME}
+spring.datasource.password=${DATABASE_PASSWORD}
+spring.datasource.driver-class-name=org.postgresql.Driver
+```
+
+| Property | Purpose |
+|---|---|
+| `spring.datasource.url` | Database JDBC URL |
+| `spring.datasource.username` | Database username |
+| `spring.datasource.password` | Database password |
+| `spring.datasource.driver-class-name` | JDBC driver class |
+
+Example:
+
+```text
+DATABASE_URL=jdbc:postgresql://localhost:5432/taskmanager
+DATABASE_USERNAME=taskmanager_user
+DATABASE_PASSWORD=your_local_password
+```
+
+### Why no fallback values?
+
+The PostgreSQL profile does not silently fall back to H2 or default credentials.
+
+If required configuration is missing, startup should fail rather than connecting to an unintended database.
+
+---
+
+## 5. Environment Variables and Secret Management
+
+Environment variables allow configuration to differ between environments without modifying source code.
+
+PowerShell example:
+
+```powershell
+$env:DATABASE_URL = "jdbc:postgresql://localhost:5432/taskmanager"
+$env:DATABASE_USERNAME = "taskmanager_user"
+$env:DATABASE_PASSWORD = "your_local_password"
+```
+
+The application also requires `JWT_SECRET` for JWT signing.
+
+Security rules:
+- Never commit database passwords.
+- Never commit JWT signing secrets.
+- Do not hardcode production credentials.
+- Do not reuse development credentials in production.
+
+Environment variables are a configuration mechanism, not a complete secret-management platform.
+
+---
+
+## 6. Spring Profiles
+
+Spring profiles allow different configuration settings to be activated for different environments.
+
+Example:
+
+```text
+src/main/resources/
+    application.properties
+    application-postgres.properties
+    application-prod.properties
+```
+
+The base `application.properties` provides common settings. Profile-specific files override or supplement them.
+
+### PostgreSQL profile
+
+The `postgres` profile configures:
+- PostgreSQL connection properties.
+- PostgreSQL JDBC driver.
+- Temporary local-development Hibernate schema update behavior.
+- SQL logging disabled.
+- H2 console disabled.
+
+### Production profile
+
+The existing production profile uses:
+
+```properties
+spring.jpa.hibernate.ddl-auto=validate
+spring.jpa.show-sql=false
+```
+
+### Activate PostgreSQL profile
+
+```powershell
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=postgres"
+```
+
+Set all required environment variables before starting the application.
+
+**Important:** The `postgres` profile is for local PostgreSQL development in this phase. It uses Hibernate `update` temporarily. It is not the production profile.
+
+---
+
+## 7. Hibernate Schema Generation: ddl-auto
+
+Hibernate can manage database schema changes based on JPA entity mappings.
+
+The property is:
+
+```properties
+spring.jpa.hibernate.ddl-auto=...
+```
+
+| Value | Behavior |
+|---|---|
+| `none` | Hibernate does not manage the schema |
+| `validate` | Checks schema compatibility |
+| `update` | Attempts to update the schema |
+| `create` | Creates the schema at startup |
+| `create-drop` | Creates at startup and drops at shutdown |
+
+### Why create-drop is dangerous
+
+If used against a persistent production database, Hibernate can drop the schema when the application shuts down, potentially destroying data.
+
+### Why update is temporary
+
+The PostgreSQL development profile uses:
+
+```properties
+spring.jpa.hibernate.ddl-auto=update
+```
+
+This is a temporary local-development convenience.
+
+Hibernate automatic updates are not a replacement for controlled, versioned database migrations.
+
+### Why production uses validate
+
+```properties
+spring.jpa.hibernate.ddl-auto=validate
+```
+
+Hibernate checks schema compatibility without automatically creating, changing or dropping tables.
+
+After Flyway is introduced, Flyway will manage schema changes and Hibernate will validate the resulting schema.
+
+---
+
+## 8. SQL Logging
+
+The PostgreSQL profile uses:
+
+```properties
+spring.jpa.show-sql=false
+```
+
+SQL logging can help developers understand Hibernate-generated SQL, but it can make logs noisy and potentially expose query details or sensitive values.
+
+SQL logging should be configured deliberately for each environment.
+
+---
+
+## 9. PostgreSQL Integration Testing with Testcontainers
+
+Testcontainers is a testing library that starts disposable services, such as PostgreSQL, in containers for integration tests.
+
+Example:
+
+```java
+@Testcontainers
+@SpringBootTest
+@ActiveProfiles("postgres")
+class PostgreSqlIntegrationTest {
+
+    @Container
+    private static final PostgreSQLContainer<?> POSTGRES =
+            new PostgreSQLContainer<>("postgres:16-alpine");
+}
+```
+
+### What the test verifies when executed
+
+1. DataSource availability.
+2. Actual PostgreSQL connection.
+3. User persistence and retrieval.
+4. Task persistence and retrieval.
+5. TaskPriority enum persistence.
+6. Task-to-user relationship.
+7. Owner-scoped filtering.
+8. Combined status, priority, title and due-date filtering.
+9. Pagination metadata and results.
+
+### Dynamic properties
+
+`@DynamicPropertySource` supplies Testcontainers connection details to Spring.
+
+This avoids hardcoded database credentials in the test.
+
+### Why the test is opt-in
+
+The test uses:
+
+```java
+@EnabledIfSystemProperty(
+    named = "runPostgresIntegration",
+    matches = "true"
+)
+```
+
+This keeps the ordinary H2 suite independent of Docker availability.
+
+### Actual verification limitation
+
+Testcontainers received an empty Docker named-pipe response.
+
+Consequently:
+- The H2 suite passed.
+- The PostgreSQL test was skipped in the default run.
+- The separate PostgreSQL attempt could not start its container.
+- PostgreSQL persistence assertions were not successfully executed.
+
+Do not describe PostgreSQL integration as verified until the test actually runs and passes.
+
+---
+
+## 10. Local PostgreSQL Setup
+
+A local PostgreSQL server or container is required.
+
+Example Docker command:
+
+```powershell
+docker run --name taskmanager-postgres `
+  -e POSTGRES_DB=taskmanager `
+  -e POSTGRES_USER=taskmanager_user `
+  -e POSTGRES_PASSWORD=your_local_password `
+  -p 5432:5432 `
+  -d postgres:16
+```
+
+Configure connection variables:
+
+```powershell
+$env:DATABASE_URL = "jdbc:postgresql://localhost:5432/taskmanager"
+$env:DATABASE_USERNAME = "taskmanager_user"
+$env:DATABASE_PASSWORD = "your_local_password"
+```
+
+Also configure the required JWT secret.
+
+Start the application:
+
+```powershell
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=postgres"
+```
+
+These are local development credentials only. Do not use example credentials in production.
+
+---
+
+## 11. H2 and PostgreSQL Testing Strategy
+
+### H2 tests
+
+Advantages:
+- Fast execution.
+- No separate database server required.
+- Convenient for repository and application tests.
+- No Docker requirement.
+
+### PostgreSQL integration tests
+
+Advantages:
+- Verify PostgreSQL connection behavior.
+- Exercise real PostgreSQL persistence.
+- Help identify database differences that H2 may not reveal.
+
+Both approaches are useful. H2 provides a fast default test workflow, while PostgreSQL integration tests provide database-engine-specific confidence.
+
+---
+
+## 12. Important Design Rules
+
+1. Keep database credentials outside source code.
+2. Do not silently fall back to H2 when the PostgreSQL profile is selected.
+3. Do not use `create-drop` against a persistent production database.
+4. Treat Hibernate `update` as temporary local-development behavior.
+5. Use Hibernate `validate` when migrations manage the schema.
+6. Keep Docker-dependent integration tests separate from the default H2 workflow.
+7. Never claim PostgreSQL integration verification unless the test actually passes.
+8. Preserve authentication, OAuth2, refresh-token and task-ownership behavior.
+9. Do not drop an existing database to make schema configuration easier.
+10. Introduce version-controlled migrations before treating PostgreSQL as production-ready.
+
+---
+
+## 13. Phase 6.1 Implementation Summary
+
+### Files created
+
+- `application-postgres.properties`
+- `PostgreSqlIntegrationTest.java`
+
+### Files modified
+
+- `pom.xml`
+- `learning_concepts.md`
+
+### Dependencies added
+
+- PostgreSQL JDBC driver.
+- Testcontainers JUnit Jupiter.
+- Testcontainers PostgreSQL.
+
+### Test results
+
+| Verification | Result |
+|---|---|
+| Full default Maven suite | 135 tests |
+| Failures | 0 |
+| Errors | 0 |
+| Skipped | 1 |
+| IDE compilation | Passed |
+| PostgreSQL Testcontainers execution | Blocked by Docker communication |
+| pom.xml diff check | Passed |
+| learning_concepts.md diff check | Existing trailing whitespace in earlier Phase 5.4 content |
+
+No authentication, security, entity, repository or task business logic was intentionally changed in Phase 6.1.
+
+---
+
+## 14. Interview Questions and Answers
+
+### Q1. What is PostgreSQL?
+
+PostgreSQL is an open-source relational database management system used to store structured data. It supports SQL, transactions, constraints, indexes and relationships.
+
+### Q2. What is JDBC?
+
+JDBC is the standard Java API for connecting to relational databases and executing SQL operations.
+
+### Q3. Why do we need a PostgreSQL JDBC driver?
+
+It implements JDBC communication for PostgreSQL, allowing Java applications and Hibernate to communicate with the PostgreSQL server.
+
+### Q4. What is a DataSource?
+
+A DataSource represents the configured source of database connections. Spring Boot creates it using datasource properties.
+
+### Q5. What are Spring profiles?
+
+Spring profiles activate different configurations for different environments, such as development, PostgreSQL local development and production.
+
+### Q6. Why use environment variables for database credentials?
+
+They keep credentials outside source code and allow the same application artifact to use different configuration in different environments.
+
+### Q7. What is the difference between H2 and PostgreSQL?
+
+H2 is a lightweight database often used for development and testing. PostgreSQL is a full database server commonly used for persistent production workloads.
+
+### Q8. What does ddl-auto=update do?
+
+It asks Hibernate to attempt to update the database schema based on entity mappings. It is convenient for local development but is not a controlled migration strategy.
+
+### Q9. Why is create-drop dangerous in production?
+
+It creates the schema at startup and drops it at shutdown, which can destroy persistent data.
+
+### Q10. What does ddl-auto=validate do?
+
+It checks whether the database schema is compatible with entity mappings without automatically changing it.
+
+### Q11. What is Testcontainers?
+
+Testcontainers runs disposable dependencies, such as PostgreSQL, in containers so integration tests can use real services.
+
+### Q12. Why keep H2 tests if PostgreSQL is supported?
+
+H2 allows fast tests without Docker or a database server. PostgreSQL integration tests separately verify behavior against the intended database engine.
+
+### Q13. Does a successful H2 test suite prove PostgreSQL compatibility?
+
+No. H2 and PostgreSQL can differ in SQL behavior, data types and database-specific features. PostgreSQL integration tests are needed for direct verification.
+
+### Q14. Why should production avoid Hibernate automatic schema updates?
+
+Production schema changes should be explicit, reviewed, versioned and repeatable. Flyway provides this control.
+
+---
+
+## 15. Next Phase — Flyway Database Migrations
+
+Phase 6.2 will introduce version-controlled SQL migrations.
+
+Topics:
+- Flyway dependencies and configuration.
+- Initial database schema creation.
+- Migration versioning and history.
+- Existing schema baselining.
+- Task priority backfill for existing records.
+- Foreign keys, constraints and indexes.
+- Hibernate schema validation after migration.
+
+The goal is to make database schema changes explicit and safe without losing existing application data.

@@ -44,6 +44,15 @@ class UserRepositoryTest {
     }
 
     @Test
+    void emailExistenceAndLookupAreCaseInsensitive() {
+        userRepository.saveAndFlush(newUser("Case User", "case@example.com"));
+
+        assertThat(userRepository.findByEmailIgnoreCase("CASE@EXAMPLE.COM"))
+            .isPresent();
+        assertThat(userRepository.existsByEmailIgnoreCase("Case@Example.com")).isTrue();
+    }
+
+    @Test
     void shouldRejectDuplicateEmail() {
         userRepository.saveAndFlush(newUser("First", "duplicate@example.com"));
 

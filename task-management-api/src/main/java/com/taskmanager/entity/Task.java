@@ -1,5 +1,6 @@
 package com.taskmanager.entity;
 
+import com.taskmanager.enums.TaskPriority;
 import com.taskmanager.enums.TaskStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -36,6 +37,10 @@ public class Task {
     @Column(nullable = false)
     private TaskStatus status;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private TaskPriority priority = TaskPriority.MEDIUM;
+
     @Column
     private LocalDate dueDate;
 
@@ -59,9 +64,21 @@ public class Task {
         LocalDate dueDate,
         User user
     ) {
+        this(title, description, status, TaskPriority.MEDIUM, dueDate, user);
+    }
+
+    public Task(
+        String title,
+        String description,
+        TaskStatus status,
+        TaskPriority priority,
+        LocalDate dueDate,
+        User user
+    ) {
         this.title = title;
         this.description = description;
         this.status = status;
+        this.priority = priority == null ? TaskPriority.MEDIUM : priority;
         this.dueDate = dueDate;
         this.user = user;
     }
@@ -69,6 +86,9 @@ public class Task {
     @PrePersist
     protected void populateCreatedAndUpdatedAt() {
         LocalDateTime now = LocalDateTime.now();
+        if (priority == null) {
+            priority = TaskPriority.MEDIUM;
+        }
         if (createdAt == null) {
             createdAt = now;
         }
@@ -102,6 +122,14 @@ public class Task {
 
     public TaskStatus getStatus() {
         return status;
+    }
+
+    public TaskPriority getPriority() {
+        return priority;
+    }
+
+    public void setPriority(TaskPriority priority) {
+        this.priority = priority;
     }
 
     public void setStatus(TaskStatus status) {

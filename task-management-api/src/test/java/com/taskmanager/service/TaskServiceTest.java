@@ -2,15 +2,21 @@ package com.taskmanager.service;
 
 import com.taskmanager.entity.Task;
 import com.taskmanager.entity.User;
+import com.taskmanager.enums.TaskPriority;
 import com.taskmanager.enums.TaskStatus;
 import com.taskmanager.repository.TaskRepository;
-import com.taskmanager.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -30,114 +36,179 @@ class TaskServiceTest {
     private TaskRepository taskRepository;
 
     @Mock
-    private UserRepository userRepository;
+    private CurrentUserService currentUserService;
 
     @InjectMocks
     private TaskService taskService;
 
-    @Test
-    void shouldCreateTaskForExistingUser() {
-        User user = new User("Alice", "alice@example.com");
-        Task unsavedTask = new Task(
-            "Test",
-            "Description",
-            TaskStatus.PENDING,
-            LocalDate.now().plusDays(1),
-            user
-        );
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
-        when(taskRepository.save(any(Task.class))).thenReturn(unsavedTask);
+    private final Authentication authentication =
+            UsernamePasswordAuthenticationToken.authenticated("alice@example.com", null, List.of());
 
-        Task result = taskService.createTask(
-            1L,
-            "Test",
-            "Description",
-            TaskStatus.PENDING,
-            LocalDate.now().plusDays(1)
+    @Test
+    void createsTaskUsingResolvedAuthenticatedUser() {
+        User user = new User("Alice", "alice@example.com", "encoded-password");
+        when(currentUserService.resolve(authentication)).thenReturn(user);
+        when(taskRepository.save(any(Task.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Task created = taskService.createTask(
+                authentication,
+                "Test",
+                "Description",
+                TaskStatus.PENDING,
+                LocalDate.now().plusDays(1),
+                null
         );
 
-        assertThat(result).isSameAs(unsavedTask);
-        verify(taskRepository).save(any(Task.class));
+        assertThat(created.getUser()).isSameAs(user);
+        assertThat(created.getPriority()).isEqualTo(TaskPriority.MEDIUM);
+        ArgumentCaptor<Task> taskCaptor = ArgumentCaptor.forClass(Task.class);
+        verify(taskRepository).save(taskCaptor.capture());
+        assertThat(taskCaptor.getValue().getUser()).isSameAs(user);
     }
 
     @Test
-    void shouldRejectTaskCreationForMissingUser() {
-        when(userRepository.findById(99L)).thenReturn(Optional.empty());
+    void createsTaskWithEachExplicitPriority() {
+        User user = new User("Alice", "alice@example.com", "encoded-password");
+        when(currentUserService.resolve(authentication)).thenReturn(user);
+        when(taskRepository.save(any(Task.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        assertThatThrownBy(() -> taskService.createTask(
-            99L,
-            "Test",
-            "Description",
-            TaskStatus.PENDING,
-            LocalDate.now()
-        )).isInstanceOf(EntityNotFoundException.class);
+        for (TaskPriority priority : TaskPriority.values()) {
+            Task created = taskService.createTask(
+                    authentication, "Task", null, TaskStatus.PENDING, null, priority
+            );
+            assertThat(created.getPriority()).isEqualTo(priority);
+        }
     }
 
     @Test
-    void shouldRetrieveAllTasks() {
-        when(taskRepository.findAll()).thenReturn(List.of(
-            new Task("A", null, TaskStatus.PENDING, null, new User("A", "a@example.com")),
-            new Task("B", null, TaskStatus.COMPLETED, null, new User("B", "b@example.com"))
-        ));
+    void retrievesTasksOnlyByResolvedOwnerId() {
+        User user = userWithId();
+        when(currentUserService.resolve(authentication)).thenReturn(user);
+        when(taskRepository.findOwnedTasks(
+                org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                any(PageRequest.class)
+        )).thenReturn(new PageImpl<>(List.of(
+                new Task("Alice task", null, TaskStatus.PENDING, null, user)
+        )));
 
-        assertThat(taskService.getAllTasks()).hasSize(2);
+        Page<Task> result = taskService.getTasksForCurrentUser(
+                authentication, 0, 10, "createdAt", "desc", null, null, null, null, null
+        );
+        assertThat(result.getContent())
+                .extracting(Task::getTitle)
+                .containsExactly("Alice task");
+        verify(taskRepository).findOwnedTasks(
+                org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(),
+                any(PageRequest.class)
+        );
+        verify(taskRepository, never()).findAll();
     }
 
     @Test
-    void shouldRetrieveTaskById() {
-        Task task = new Task("A", null, TaskStatus.PENDING, null,
-            new User("A", "a@example.com"));
-        when(taskRepository.findById(1L)).thenReturn(Optional.of(task));
+    void rejectsUnsupportedSortAndInvalidPagination() {
+        assertThatThrownBy(() -> taskService.getTasksForCurrentUser(
+                authentication, 0, 10, "user.passwordHash", "asc", null, null, null, null, null
+        )).isInstanceOf(com.taskmanager.exception.InvalidTaskQueryException.class);
 
-        assertThat(taskService.getTaskById(1L)).isSameAs(task);
+        assertThatThrownBy(() -> taskService.getTasksForCurrentUser(
+                authentication, 0, 101, "title", "asc", null, null, null, null, null
+        )).isInstanceOf(com.taskmanager.exception.InvalidTaskQueryException.class);
     }
 
     @Test
-    void shouldRejectMissingTask() {
-        when(taskRepository.findById(99L)).thenReturn(Optional.empty());
+    void retrievesTaskWithTaskAndOwnerIdsTogether() {
+        User user = userWithId();
+        Task task = new Task("Alice task", null, TaskStatus.PENDING, null, user);
+        when(currentUserService.resolve(authentication)).thenReturn(user);
+        when(taskRepository.findByIdAndUserId(10L, 1L)).thenReturn(Optional.of(task));
 
-        assertThatThrownBy(() -> taskService.getTaskById(99L))
-            .isInstanceOf(EntityNotFoundException.class);
+        assertThat(taskService.getTaskForCurrentUser(authentication, 10L)).isSameAs(task);
     }
 
     @Test
-    void shouldUpdateTask() {
-        Task task = new Task("Old", "Old description", TaskStatus.PENDING, null,
-            new User("A", "a@example.com"));
-        when(taskRepository.findById(1L)).thenReturn(Optional.of(task));
+    void otherUsersTaskUsesSameNotFoundBehavior() {
+        User user = userWithId();
+        when(currentUserService.resolve(authentication)).thenReturn(user);
+        when(taskRepository.findByIdAndUserId(20L, 1L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> taskService.getTaskForCurrentUser(authentication, 20L))
+                .isInstanceOf(EntityNotFoundException.class)
+                .hasMessage("Task not found.");
+    }
+
+    @Test
+    void updatesOnlyOwnedTaskAndDoesNotChangeOwner() {
+        User owner = userWithId();
+        Task task = new Task("Old", "Old description", TaskStatus.PENDING, null, owner);
+        when(currentUserService.resolve(authentication)).thenReturn(owner);
+        when(taskRepository.findByIdAndUserId(10L, 1L)).thenReturn(Optional.of(task));
+
         Task result = taskService.updateTask(
-            1L,
-            "New",
-            "New description",
-            TaskStatus.IN_PROGRESS,
-            LocalDate.now()
+                authentication,
+                10L,
+                "New",
+                "New description",
+                TaskStatus.IN_PROGRESS,
+                TaskPriority.URGENT,
+                LocalDate.now()
         );
 
         assertThat(result.getTitle()).isEqualTo("New");
         assertThat(result.getDescription()).isEqualTo("New description");
         assertThat(result.getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
+        assertThat(result.getPriority()).isEqualTo(TaskPriority.URGENT);
+        assertThat(result.getUser()).isSameAs(owner);
+        verify(taskRepository, never()).findById(10L);
         verify(taskRepository, never()).save(task);
     }
 
     @Test
-    void shouldDeleteTask() {
-        Task task = new Task("A", null, TaskStatus.PENDING, null,
-            new User("A", "a@example.com"));
-        when(taskRepository.findById(1L)).thenReturn(Optional.of(task));
+    void cannotUpdateTaskOwnedByAnotherUser() {
+        User user = userWithId();
+        when(currentUserService.resolve(authentication)).thenReturn(user);
+        when(taskRepository.findByIdAndUserId(20L, 1L)).thenReturn(Optional.empty());
 
-        taskService.deleteTask(1L);
+        assertThatThrownBy(() -> taskService.updateTask(
+                authentication, 20L, "Changed", null, TaskStatus.COMPLETED, TaskPriority.HIGH, null
+        )).isInstanceOf(EntityNotFoundException.class);
+    }
+
+    @Test
+    void cannotDeleteTaskOwnedByAnotherUser() {
+        User user = userWithId();
+        when(currentUserService.resolve(authentication)).thenReturn(user);
+        when(taskRepository.findByIdAndUserId(20L, 1L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> taskService.deleteTask(authentication, 20L))
+                .isInstanceOf(EntityNotFoundException.class);
+        verify(taskRepository, never()).delete(any(Task.class));
+    }
+
+    @Test
+    void deletesOwnedTask() {
+        User user = userWithId();
+        Task task = new Task("Alice task", null, TaskStatus.PENDING, null, user);
+        when(currentUserService.resolve(authentication)).thenReturn(user);
+        when(taskRepository.findByIdAndUserId(10L, 1L)).thenReturn(Optional.of(task));
+
+        taskService.deleteTask(authentication, 10L);
 
         verify(taskRepository).delete(task);
     }
 
-    @Test
-    void shouldRetrieveTasksByUserId() {
-        when(userRepository.existsById(1L)).thenReturn(true);
-        when(taskRepository.findByUserId(1L)).thenReturn(List.of(
-            new Task("A", null, TaskStatus.PENDING, null,
-                new User("A", "a@example.com"))
-        ));
-
-        assertThat(taskService.getTasksByUserId(1L)).hasSize(1);
+    private User userWithId() {
+        User user = org.mockito.Mockito.mock(User.class);
+        org.mockito.Mockito.when(user.getId()).thenReturn(1L);
+        return user;
     }
 }

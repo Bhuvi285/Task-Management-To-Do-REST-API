@@ -1,5 +1,8 @@
+com\taskmanager\repository\TaskPriorityMigrationBackfillTest.class
 com\taskmanager\service\LoginRateLimiterTest.class
 com\taskmanager\controller\AuthHardeningIntegrationTest$TestConfigurationBeans.class
+com\taskmanager\repository\FlywayMigrationIntegrationTest.class
+com\taskmanager\security\OAuth2AuthenticationSuccessHandlerTest.class
 com\taskmanager\config\SecurityConfigTest.class
 com\taskmanager\controller\AuthHardeningIntegrationTest$TestPasswordResetDelivery.class
 com\taskmanager\service\PasswordResetRateLimiterTest$MutableClock.class
@@ -9,8 +12,12 @@ com\taskmanager\security\GithubOAuth2UserServiceTest.class
 com\taskmanager\config\OAuth2ClientConfigurationTest.class
 com\taskmanager\security\GoogleOidcUserServiceTest.class
 com\taskmanager\service\JwtServiceTest.class
+com\taskmanager\security\OAuth2AuthenticationSuccessHandlerIntegrationTest.class
+com\taskmanager\service\TaskServiceIntegrationTest.class
 com\taskmanager\controller\AuthControllerIntegrationTest$ProtectedTestEndpoint.class
 com\taskmanager\controller\AuthControllerIntegrationTest$ProtectedEndpointConfiguration.class
+com\taskmanager\service\CurrentUserServiceTest.class
+com\taskmanager\controller\TaskControllerIntegrationTest.class
 com\taskmanager\service\PasswordResetRateLimiterTest.class
 com\taskmanager\repository\PersistenceBehaviorTest.class
 com\taskmanager\service\LoginRateLimiterTest$MutableClock.class
