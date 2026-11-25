@@ -12622,3 +12622,1917 @@ Topics:
 - Hibernate schema validation after migration.
 
 The goal is to make database schema changes explicit and safe without losing existing application data.
+
+
+
+# Phase 6.2 — Flyway Database Migrations
+
+## 1. Introduction
+
+Phase 6.2 introduces Flyway for version-controlled database schema management.
+
+Previously, Hibernate `ddl-auto=update` was used for local PostgreSQL schema management. Although convenient during development, automatic updates do not provide an explicit, reviewable migration history.
+
+Flyway manages schema changes through ordered SQL migration files.
+
+### Objectives
+
+- Add Flyway support.
+- Create the initial database schema.
+- Introduce versioned SQL migrations.
+- Backfill existing task records with MEDIUM priority.
+- Make Flyway responsible for schema changes.
+- Configure Hibernate to validate the schema.
+- Test fresh database creation and schema upgrades.
+- Avoid automatic baselining and destructive database cleanup.
+
+## 2. What is a database migration?
+
+A database migration is a controlled change to a database schema or its data.
+
+Examples:
+- Creating a table.
+- Adding a column.
+- Adding a foreign key.
+- Creating an index.
+- Changing a constraint.
+- Updating existing records.
+
+Migrations ensure that database changes are repeatable, versioned and consistent across environments.
+
+## 3. What is Flyway?
+
+Flyway is a database migration tool that manages schema evolution through ordered SQL files.
+
+Simplified lifecycle:
+
+1. Application starts.
+2. Flyway connects to the database.
+3. Flyway checks migration history.
+4. It discovers migration files.
+5. It identifies pending migrations.
+6. It executes migrations in version order.
+7. It records successful migrations.
+8. Hibernate validates the resulting schema.
+
+**Flyway changes the schema; Hibernate validates it.**
+
+## 4. Versioned migration files
+
+Flyway uses a naming convention:
+
+```text
+V1__create_initial_schema.sql
+V2__add_task_priority.sql
+V3__add_future_feature.sql
+```
+
+General format:
+
+```text
+V<version>__<description>.sql
+```
+
+- V identifies a versioned migration.
+- Version determines execution order.
+- Double underscore separates version and description.
+- Description explains the change.
+
+Migration versions should be unique. Avoid changing migrations already applied to shared databases.
+
+## 5. Flyway schema history
+
+Flyway maintains a metadata table commonly named:
+
+```text
+flyway_schema_history
+```
+
+It records migration versions, scripts, checksums, execution status and timing information.
+
+When the application starts again, Flyway checks this history and identifies migrations already applied.
+
+Do not manually delete migration-history records to bypass migration problems.
+
+## 6. Project migration sequence
+
+The implementation represents five entity tables:
+
+1. users
+2. tasks
+3. oauth_accounts
+4. password_reset_tokens
+5. refresh_tokens
+
+The implementation report also identifies four user foreign keys, declared unique constraints and indexes, and string-backed task/status/OAuth enums.
+
+### V1 — Initial schema
+
+V1 creates the database schema before task priority was introduced.
+
+### V2 — Add task priority
+
+Phase 5.4 introduced:
+
+```text
+LOW
+MEDIUM
+HIGH
+URGENT
+```
+
+V2:
+1. Adds the priority column.
+2. Backfills existing tasks with MEDIUM.
+3. Sets a default for future inserts.
+4. Enforces NOT NULL.
+5. Restricts values to supported priorities.
+
+### Why MEDIUM?
+
+Existing tasks were created before priority management existed.
+
+MEDIUM is also the application's default priority when a newly created task does not specify one.
+
+## 7. Data backfilling
+
+A backfill updates existing records so they comply with a new schema.
+
+Conceptual SQL:
+
+```sql
+ALTER TABLE tasks ADD COLUMN priority VARCHAR(20);
+
+UPDATE tasks
+SET priority = 'MEDIUM'
+WHERE priority IS NULL;
+
+ALTER TABLE tasks
+ALTER COLUMN priority SET DEFAULT 'MEDIUM';
+
+ALTER TABLE tasks
+ALTER COLUMN priority SET NOT NULL;
+```
+
+The actual migration SQL remains the source of truth.
+
+The important sequence is:
+
+- Add the new column.
+- Populate existing records.
+- Apply the default.
+- Enforce NOT NULL.
+
+## 8. Constraints and indexes
+
+**Primary key:** Uniquely identifies each database row.
+
+**Foreign key:** Enforces relationships between tables.
+
+**Unique constraint:** Prevents duplicate values.
+
+**NOT NULL:** Requires a column to contain a value.
+
+**Check constraint:** Restricts values according to a condition.
+
+**Index:** Helps the database locate rows efficiently for supported queries.
+
+The migration should preserve the constraints and indexes defined by the application's actual entity mappings.
+
+## 9. String-backed enums
+
+JPA:
+
+```java
+@Enumerated(EnumType.STRING)
+```
+
+stores enum names as text.
+
+Examples:
+
+```text
+TaskPriority.HIGH   -> "HIGH"
+TaskPriority.URGENT -> "URGENT"
+```
+
+This is generally safer than ordinal persistence because reordering enum constants does not silently change the meaning of stored numeric values.
+
+## 10. Hibernate update vs validate
+
+Before Flyway, the PostgreSQL profile used:
+
+```properties
+spring.jpa.hibernate.ddl-auto=update
+```
+
+After Flyway, the intended configuration is:
+
+```properties
+spring.jpa.hibernate.ddl-auto=validate
+```
+
+| Setting | Behavior |
+|---|---|
+| update | Hibernate attempts to change the schema |
+| validate | Hibernate checks schema compatibility |
+| create | Creates the schema |
+| create-drop | Creates at startup and drops at shutdown |
+| none | Hibernate does not manage the schema |
+
+Production should not rely on automatic Hibernate schema updates.
+
+Flyway manages schema changes, while Hibernate validates the result.
+
+## 11. Flyway baselining
+
+Baselining tells Flyway that an existing database should be treated as being at a particular migration version.
+
+It is useful when adopting Flyway for a database that already has a schema.
+
+However, automatic baselining is risky if the existing database does not actually match the selected migration version.
+
+Safe process:
+
+1. Back up the database.
+2. Inspect the existing schema.
+3. Compare tables, columns, constraints and indexes.
+4. Confirm the priority column and existing data state.
+5. Select the baseline version only after verification.
+6. Apply later migrations.
+7. Run Hibernate validation.
+
+Do not drop an existing database just to make Flyway work.
+
+The implementation disables automatic baselining because the local PostgreSQL schema could not be inspected.
+
+## 12. Flyway clean
+
+Flyway clean drops database objects in the configured schema.
+
+It is destructive.
+
+Rules:
+- Never use clean against production.
+- Do not drop tables to fix migration errors.
+- Do not delete migration history to force migrations to rerun.
+- Diagnose schema differences first.
+
+The implementation keeps Flyway clean disabled.
+
+## 13. Migration testing
+
+The phase adds H2 migration tests for:
+
+- Fresh schema creation.
+- Expected constraints.
+- JPA persistence.
+- V1-to-V2 migration.
+- Existing task priority backfill.
+
+Fresh migration tests verify that a new database can be created.
+
+Upgrade tests verify that existing data survives schema changes.
+
+H2 tests do not prove PostgreSQL compatibility. PostgreSQL migration execution must also be tested against PostgreSQL.
+
+## 14. Important design rules
+
+1. Treat migration files as versioned application assets.
+2. Do not casually edit migrations already applied to shared databases.
+3. Add a new migration for every new schema change.
+4. Backfill existing rows before enforcing new non-null constraints.
+5. Keep database constraints aligned with application rules.
+6. Let Flyway manage schema changes.
+7. Let Hibernate validate the migrated schema.
+8. Never automatically baseline an uninspected database.
+9. Keep Flyway clean disabled outside disposable test environments.
+10. Test fresh schema creation and upgrades.
+11. Never claim PostgreSQL migration verification unless PostgreSQL tests actually execute successfully.
+
+## 15. Implementation summary
+
+### Schema tables
+
+- users
+- tasks
+- oauth_accounts
+- password_reset_tokens
+- refresh_tokens
+
+### Migration sequence
+
+| Migration | Responsibility |
+|---|---|
+| V1 | Create initial schema before task priority |
+| V2 | Add priority, backfill MEDIUM, set default and NOT NULL, restrict values |
+
+### Configuration
+
+- Flyway manages schema changes.
+- Hibernate validates the schema.
+- Automatic baselining is disabled.
+- Flyway clean is disabled.
+- Existing database data is not intentionally dropped or recreated.
+
+### Reported test results
+
+| Verification | Result |
+|---|---|
+| Full Maven suite | 137 tests |
+| Failures | 0 |
+| Errors | 0 |
+| Skipped | 1 |
+| Focused migration tests | 2 passed |
+| PostgreSQL migration execution | Not verified |
+| Existing worktree | Preserved |
+
+## 16. Interview questions
+
+**Q1. What is Flyway?**
+
+Flyway is a database migration tool that applies ordered SQL migration files and records which migrations have executed.
+
+**Q2. Why use Flyway with Hibernate?**
+
+Hibernate maps Java entities to database tables. Flyway provides explicit, version-controlled schema evolution, while Hibernate validates the result.
+
+**Q3. What is a versioned migration?**
+
+A uniquely numbered SQL file executed in migration order, such as V1__create_initial_schema.sql.
+
+**Q4. What is flyway_schema_history?**
+
+It is Flyway's metadata table containing migration versions, scripts, checksums and execution status.
+
+**Q5. Why should an applied migration not be edited?**
+
+Flyway uses migration history and checksums. Editing an applied migration can cause checksum mismatches and inconsistent environments.
+
+**Q6. Why does V2 backfill existing tasks with MEDIUM?**
+
+Those tasks were created before priority existed. MEDIUM gives every legacy task a valid default.
+
+**Q7. What is baselining?**
+
+Baselining marks an existing database as being at a particular migration version so Flyway can apply later migrations.
+
+**Q8. Why is automatic baselining risky?**
+
+The existing schema may not match the selected baseline, causing required migrations to be skipped.
+
+**Q9. Why keep Flyway clean disabled?**
+
+Clean drops database objects and can destroy application data.
+
+**Q10. Do H2 migration tests prove PostgreSQL migrations work?**
+
+No. PostgreSQL-specific migration execution must be tested against PostgreSQL.
+
+## 17. Next phase
+
+**Phase 6.3 — Production Configuration and Hardening**
+
+Topics:
+- Environment-specific profiles.
+- Externalized secrets.
+- Production database configuration.
+- HikariCP connection pooling.
+- Secure cookies and HTTPS settings.
+- Explicit CORS configuration.
+- Production logging and error handling.
+- Startup validation.
+- Authentication and OAuth2 regression testing.
+
+## 18. Phase 6.3 — Production Configuration and Hardening
+
+### Profiles and configuration precedence
+
+Spring Boot loads `application.properties` as the shared baseline and then overlays `application-{profile}.properties` for each active profile. Higher-precedence sources such as environment variables and command-line arguments can override file values. Keep shared settings in the base file, database-specific settings in `postgres`, local-only conveniences in `dev`, and stricter deployment settings in `prod`.
+
+| Profile | Intended use | Database and schema behavior |
+|---|---|---|
+| default | Existing lightweight H2 workflow | H2 in-memory URL; Flyway migrations; Hibernate `validate`; SQL output off; requires a developer-supplied JWT key |
+| `dev` | Local development | H2 remains the default; H2 console and SQL logging enabled; a developer-supplied JWT key is required |
+| `postgres` | Local PostgreSQL development | Requires PostgreSQL URL, username and password; Flyway enabled; Hibernate `validate`; SQL output off |
+| `prod` | Production deployment | Requires PostgreSQL URL, username and password, JWT key and explicit CORS origins; Flyway enabled; Hibernate `validate`; SQL output off |
+
+`ProductionDatabaseConfigurationValidator` rejects missing/blank database values, any non-PostgreSQL JDBC URL, and combining `prod` with the `dev` profile before production startup proceeds. `JwtService` separately rejects a missing, invalid Base64, or undersized JWT key. CORS configuration rejects missing, blank, or wildcard origins. OAuth provider credentials are only required when that provider is enabled; disabled Google and GitHub providers need no credentials.
+
+### External secrets and production environment
+
+Do not put deployment secrets in source control, command history, application logs, or exception messages. Inject them through the deployment platform's secret manager/environment. Required production variables:
+
+| Variable | Requirement |
+|---|---|
+| `DATABASE_URL` | PostgreSQL JDBC URL, for example `jdbc:postgresql://db-host:5432/taskmanager` |
+| `DATABASE_USERNAME` | Database role with only the permissions the app needs |
+| `DATABASE_PASSWORD` | Non-blank password supplied by a secret manager |
+| `JWT_SECRET` | Base64-encoded random key decoding to at least 32 bytes for HS256 |
+| `CORS_ALLOWED_ORIGINS` | Explicit comma-separated frontend origins; no `*` |
+
+Optional OAuth settings retain their existing names: `GOOGLE_OAUTH2_ENABLED`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, and the corresponding `GITHUB_*` variables. The enable flags default to `false`; when enabled, the application fails startup if that provider's client ID or secret is blank. The secret values are not included in validation messages.
+
+Example PowerShell setup for **local PostgreSQL development** (replace placeholders locally; do not use these examples as production secrets):
+
+```powershell
+$env:DATABASE_URL = 'jdbc:postgresql://localhost:5432/taskmanager'
+$env:DATABASE_USERNAME = '<local-postgres-user>'
+$env:DATABASE_PASSWORD = '<local-postgres-password>'
+$env:JWT_SECRET = '<base64-random-key-decoding-to-at-least-32-bytes>'
+$env:CORS_ALLOWED_ORIGINS = 'http://localhost:3000'
+$env:GOOGLE_OAUTH2_ENABLED = 'false'
+$env:GITHUB_OAUTH2_ENABLED = 'false'
+.\task-management-api\mvnw.cmd -f task-management-api\pom.xml spring-boot:run -Dspring-boot.run.profiles=postgres
+```
+
+For local H2, use the `dev` profile and configure a local `JWT_SECRET`; the default datasource remains H2. `JWT_SECRET` is required in every running profile because JWT signing has no weak fallback. Do not copy production credentials into a local `.properties` file. `SESSION_COOKIE_SECURE` defaults to `false` for local HTTP and is set to `true` by the production profile.
+
+### HikariCP connection pooling
+
+Spring Boot's standard DataSource auto-configuration continues to create the HikariCP pool; no custom DataSource bean is introduced. Shared defaults are deliberately conservative and can be overridden through:
+
+| Environment variable | Default | Hikari property |
+|---|---:|---|
+| `DB_POOL_MAX_SIZE` | `10` | `maximum-pool-size` |
+| `DB_POOL_MIN_IDLE` | `2` | `minimum-idle` |
+| `DB_POOL_CONNECTION_TIMEOUT_MS` | `30000` | `connection-timeout` |
+| `DB_POOL_IDLE_TIMEOUT_MS` | `600000` | `idle-timeout` |
+| `DB_POOL_MAX_LIFETIME_MS` | `1800000` | `max-lifetime` |
+| `DB_POOL_VALIDATION_TIMEOUT_MS` | `5000` | `validation-timeout` |
+
+Choose the maximum pool size against the database's total connection budget: across all application replicas, `replica count × maximum pool size` plus migration, monitoring, administrative and other clients must remain below the database limit, with headroom reserved. These defaults are not a guarantee of a particular hosting provider's capacity. Set pool values through deployment configuration and ensure `minimum-idle` does not exceed `maximum-pool-size`.
+
+### Cookies, CORS and security headers
+
+The current API returns access and refresh tokens in no-store JSON responses; it does not set or delete a refresh-token cookie. The servlet session cookie supports the OAuth authorization-request state and remains `HttpOnly` with `SameSite=Lax`. Lax allows the normal top-level GET OAuth callback while reducing cross-site cookie sending. Local HTTP keeps `Secure=false`; `prod` sets `Secure=true`, so deployments must serve HTTPS. Any future cookie-based token flow must define matching path, SameSite, Secure and HttpOnly settings for both issuance and deletion rather than changing the current token transport implicitly.
+
+CORS remains explicit: configured origins only, GET/POST/PUT/DELETE/OPTIONS, Authorization and Content-Type headers, and `allowCredentials=false`. Wildcard origins are rejected. This matches the API's bearer-token integration and avoids credentialed wildcard CORS.
+
+The existing security chain retains content-type sniffing protection, `X-Frame-Options: DENY`, and `Referrer-Policy: strict-origin-when-cross-origin`. HSTS remains configured with a one-year max age and `includeSubDomains`; Spring Security emits it only for requests recognized as HTTPS, so local HTTP does not receive the HSTS header. In TLS-terminating deployments, configure trusted proxy/forwarded-header handling at the deployment boundary and do not trust arbitrary client-supplied forwarding headers.
+
+### Logging and startup responsibilities
+
+SQL display is disabled in the shared, PostgreSQL and production configurations; the `dev` profile may enable it for local debugging. Production does not enable Hibernate SQL formatting output. Keep application/security logs useful without adding passwords, JWTs, refresh tokens, OAuth credentials or database credentials to log messages. Existing authentication/OAuth failures and unexpected API errors return generic client messages; unexpected task failures are logged server-side while the response contains no stack trace.
+
+For persistent profiles, startup uses this order: connect to the configured PostgreSQL database, let Flyway validate and apply pending versioned migrations, then let Hibernate validate mapped entities against the resulting schema. Migration or schema-validation failures stop startup. `spring.flyway.clean-disabled=true` and `baseline-on-migrate=false` remain enforced; do not automatically baseline an unknown schema or drop data to make startup succeed. The PostgreSQL migration path has not been verified against a live PostgreSQL server or successful Docker/Testcontainers run in this phase.
+
+Configuration and security tests verify that production rejects empty database settings and non-PostgreSQL URLs without exposing the supplied password, persistent profiles retain Flyway plus Hibernate validation, CORS remains explicit, local HTTP does not receive HSTS, OAuth credentials are required only for enabled providers, and local H2/session-cookie defaults remain available. Existing token, OAuth and task tests remain part of the full suite.
+
+## 19. Phase 6.4 — OpenAPI and Swagger UI
+
+### API documentation and OpenAPI
+
+API documentation describes the HTTP contract clients can rely on: paths, methods, parameters, request bodies, response schemas, status codes, and authentication. OpenAPI is a language-neutral, machine-readable specification for that contract. It can drive interactive tools, generated clients, and contract checks. Swagger UI is a browser application that renders an OpenAPI document and lets developers try requests; it is a viewer and not the specification itself.
+
+This application uses the Springdoc OpenAPI WebMVC UI starter compatible with Spring Boot 3. Springdoc discovers Spring MVC routes and DTO types, while `OpenApiConfig` supplies API metadata and an HTTP Bearer security scheme. Controller annotations add descriptions, response statuses, validation context, and security details. DTO `@Schema` annotations clarify public request/response fields and keep the API contract based on DTOs rather than persistence entities. Bean Validation constraints are reflected as schema constraints where Springdoc supports them.
+
+### Endpoints and response contract
+
+The documented JSON routes are:
+
+| Area | Route | Authentication |
+|---|---|---|
+| Register | `POST /api/v1/auth/register` | Public |
+| Login | `POST /api/v1/auth/login` | Public |
+| Rotate refresh token | `POST /api/v1/auth/refresh` | Public; refresh token required in its request body |
+| Logout | `POST /api/v1/auth/logout` | Public; revokes the submitted refresh-token session |
+| Change password | `POST /api/v1/auth/change-password` | JWT access token |
+| Request password reset | `POST /api/v1/auth/forgot-password` | Public |
+| Reset password | `POST /api/v1/auth/reset-password` | Public; requires a valid reset token |
+| Create task | `POST /api/v1/tasks` | JWT access token |
+| List tasks | `GET /api/v1/tasks` | JWT access token |
+| Get, update, delete task | `GET`, `PUT`, `DELETE /api/v1/tasks/{taskId}` | JWT access token |
+| Sample message | `GET /api/v1/test` | Public |
+
+The task list accepts `page` (default `0`, nonnegative), `size` (default `10`, range 1–100), `sortBy` (default `createdAt`; `createdAt`, `updatedAt`, `dueDate`, `title`, `status`, or `priority`), `direction` (default `desc`; `asc` or `desc`), optional title `search`, `status` (`PENDING`, `IN_PROGRESS`, `COMPLETED`), `priority` (`LOW`, `MEDIUM`, `HIGH`, `URGENT`), and inclusive ISO date filters `dueFrom` and `dueTo`. When both dates are provided, `dueFrom` must not be after `dueTo`. Results include task DTOs and page index, size, total count, total pages, and first/last/empty flags. Task ownership always comes from the authenticated principal, not a request parameter.
+
+The API uses the existing `ApiErrorResponse` shape for documented errors. It contains a timestamp, HTTP status, safe message, request path, and optional validation details; it does not expose stack traces or internal exception data. Endpoint responses document success codes plus relevant `400`, `401`, and `404` errors. Authentication routes that do not require a JWT are deliberately not marked with a Bearer security requirement. A `401` means the request is unauthenticated or the credential is invalid; `403` means an authenticated caller is not allowed to perform an operation.
+
+### Bearer authentication in Swagger UI
+
+For protected routes, obtain an access token from login or refresh, select **Authorize**, and enter the access-token value. Swagger UI applies it as `Authorization: Bearer <access-token>`. Do not enter the refresh token: it is only submitted to the refresh/logout API routes, and is not accepted as a task API credential. Registration, login, refresh, logout, forgot-password, and reset-password remain public according to the current security configuration; password change and all task operations require the Bearer access token.
+
+Google and GitHub OAuth sign-in are browser redirects rather than JSON endpoints. When a provider is enabled, the browser starts at `/oauth2/authorization/google` or `/oauth2/authorization/github`; the provider redirects back to `/login/oauth2/code/{registrationId}`. These Spring Security routes are not described as ordinary controller operations. They remain subject to the existing enabled-provider configuration and OAuth credentials.
+
+### Documentation availability and security
+
+The development defaults expose:
+
+- Swagger UI: `http://localhost:8080/swagger-ui.html` (the UI is served under `/swagger-ui/`).
+- OpenAPI JSON: `http://localhost:8080/v3/api-docs`.
+
+The shared and PostgreSQL development profiles enable both routes by default. Set `API_DOCS_ENABLED=false` to disable both OpenAPI JSON and Swagger UI. The production profile defaults that variable to `false`; explicitly setting `API_DOCS_ENABLED=true` turns on both surfaces and should be a deliberate deployment decision. Spring Security permits only the Springdoc route paths required for anonymous viewing; the docs feature itself must also be enabled, so disabling Springdoc removes the routes rather than leaving a permitted API description behind. Documentation settings do not alter authorization on application endpoints.
+
+Do not publish internal APIs or sensitive examples in the generated specification. Never include passwords, password hashes, refresh-token hashes, signing keys, OAuth client secrets, or database credentials. Password request fields are write-only in schemas where applicable; task outputs use response DTOs and do not expose entity ownership relationships. Keep production documentation disabled unless there is a controlled reason to serve it.
+
+### Testing generated documentation
+
+Integration tests request `/v3/api-docs`, inspect the API title/version, Bearer scheme, endpoint paths, and security differences between public auth operations and protected routes, verify request/response schema generation, and check Swagger UI availability. A separate context with both Springdoc switches disabled verifies that the OpenAPI and UI routes return `404`. These H2-based checks test generated API documentation without calling Google, GitHub, or a PostgreSQL service.
+
+### Interview questions
+
+**Q1. What is the difference between OpenAPI and Swagger UI?**
+
+OpenAPI is the machine-readable API contract. Swagger UI is an interactive client that renders that contract.
+
+**Q2. Why should API documentation use DTOs instead of JPA entities?**
+
+DTOs define the public contract and avoid accidentally exposing persistence relationships, internal fields, or data that clients must not control.
+
+**Q3. Why is the access token entered in Swagger's Authorize dialog rather than the refresh token?**
+
+Protected resource requests authenticate with short-lived access tokens. Refresh tokens have a separate rotation/revocation lifecycle and are not resource credentials.
+
+**Q4. Why must public login operations not inherit a global JWT requirement?**
+
+Clients need to call login before possessing a token. Security requirements should be attached to protected operations, not indiscriminately applied to public routes.
+
+**Q5. Why disable documentation by default in production?**
+
+The specification can reveal endpoint structure and accepted input. Restricting or disabling it reduces unnecessary exposure and keeps production availability an explicit deployment decision.
+
+**Q6. Does documenting OAuth2 as a browser flow make it a JSON REST endpoint?**
+
+No. The authorization start and callback are redirects handled by Spring Security; they are separate from controller endpoints that accept and return JSON.
+
+
+-----------------------------------------------------------------------------------------------
+
+
+# Phase 6.4 — OpenAPI and Swagger UI
+
+## 1. Phase Objective
+
+The objective of Phase 6.4 was to implement professional API documentation for the Task Management REST API using OpenAPI 3 and Swagger UI.
+
+The documentation allows developers to understand, explore and test REST endpoints directly through a browser without having to inspect the controller source code manually.
+
+The implementation includes:
+
+- OpenAPI 3 specification generation.
+- Swagger UI integration.
+- JWT Bearer authentication documentation.
+- Authentication endpoint documentation.
+- Task management endpoint documentation.
+- Request and response DTO schemas.
+- HTTP response and error documentation.
+- API documentation availability controlled by Spring profiles and environment variables.
+- Integration tests for enabled and disabled documentation.
+
+---
+
+## 2. What is API Documentation?
+
+API documentation describes how clients and developers interact with an API.
+
+It explains:
+
+- Available endpoints.
+- HTTP methods.
+- Required request parameters.
+- Request body formats.
+- Response structures.
+- HTTP status codes.
+- Authentication requirements.
+- Validation constraints.
+- Error responses.
+
+For example, a developer integrating with the Task Management API should know:
+
+```http
+POST /api/v1/tasks
+Authorization: Bearer <access-token>
+Content-Type: application/json
+```
+
+Request:
+
+```json
+{
+  "title": "Complete Spring Boot project",
+  "description": "Finish API documentation",
+  "priority": "HIGH",
+  "dueDate": "2026-12-01"
+}
+```
+
+The documentation explains what fields are accepted and what response the API returns.
+
+### Why is API documentation important?
+
+1. Makes API integration easier.
+2. Reduces communication between frontend and backend developers.
+3. Provides a central reference for endpoints.
+4. Helps developers test APIs.
+5. Improves maintainability.
+6. Makes APIs easier to understand and consume.
+
+---
+
+## 3. What is OpenAPI?
+
+OpenAPI is a specification used to describe REST APIs in a standardized, machine-readable format.
+
+It describes:
+
+- API information.
+- Available paths and HTTP methods.
+- Request parameters.
+- Request bodies.
+- Response schemas.
+- Authentication schemes.
+- HTTP status codes.
+
+OpenAPI allows tools to understand an API automatically.
+
+For example, an OpenAPI document can describe:
+
+```yaml
+openapi: 3.0.1
+
+info:
+  title: Task Management REST API
+  version: 1.0.0
+
+paths:
+  /api/v1/tasks:
+    get:
+      summary: List the current user's tasks
+      responses:
+        "200":
+          description: Task page returned
+```
+
+Springdoc generates the OpenAPI specification from the existing Spring Boot application and its annotations.
+
+### Important
+
+OpenAPI is the API description specification. It is not itself the graphical documentation interface.
+
+---
+
+## 4. What is Swagger UI?
+
+Swagger UI is a browser-based interface that displays API documentation generated from an OpenAPI specification.
+
+It allows developers to:
+
+- View available endpoints.
+- Expand endpoint details.
+- Inspect request and response schemas.
+- Enter request parameters.
+- Provide JWT access tokens.
+- Execute API requests.
+- View actual HTTP responses.
+
+### Swagger UI in this project
+
+The default local URLs are:
+
+Swagger UI:
+
+```text
+http://localhost:8080/swagger-ui/index.html
+```
+
+OpenAPI JSON:
+
+```text
+http://localhost:8080/v3/api-docs
+```
+
+The Swagger UI URL provides the interactive interface.
+
+The OpenAPI JSON URL provides the machine-readable API specification.
+
+### OpenAPI vs Swagger UI
+
+| OpenAPI | Swagger UI |
+|---|---|
+| API specification | Interactive documentation interface |
+| Describes API structure | Displays API structure |
+| Machine-readable | Human-friendly |
+| Generated as JSON/YAML | Displayed in a browser |
+| Used by documentation tools | Used by developers to explore APIs |
+
+---
+
+## 5. Springdoc OpenAPI
+
+Springdoc OpenAPI integrates OpenAPI documentation generation with Spring Boot applications.
+
+It detects Spring MVC controllers, mappings, DTOs and annotations to generate API documentation.
+
+### Dependency used in this project
+
+```xml
+<dependency>
+    <groupId>org.springdoc</groupId>
+    <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+    <version>2.8.17</version>
+</dependency>
+```
+
+This dependency provides:
+
+- OpenAPI specification generation.
+- Swagger UI integration.
+- Spring MVC endpoint discovery.
+- DTO schema generation.
+- Support for OpenAPI annotations.
+
+### How it works
+
+The general flow is:
+
+```text
+Spring Boot Application
+        |
+        v
+Spring MVC Controllers
+        |
+        v
+Springdoc OpenAPI
+        |
+        v
+OpenAPI Specification
+        |
+        v
+Swagger UI
+        |
+        v
+Developer explores and tests APIs
+```
+
+Springdoc generates documentation from the application's existing mappings and annotations.
+
+---
+
+## 6. OpenAPI Configuration
+
+The project contains:
+
+```text
+com.taskmanager.config.OpenApiConfig
+```
+
+The configuration defines the API metadata and JWT security scheme.
+
+Important configuration:
+
+```java
+@Bean
+public OpenAPI taskManagementOpenApi() {
+    return new OpenAPI()
+        .info(new Info()
+            .title("Task Management REST API")
+            .description(
+                "REST API for user accounts, authentication, and owner-scoped task management."
+            )
+            .version("1.0.0"))
+        .components(new Components()
+            .addSecuritySchemes("bearerAuth", new SecurityScheme()
+                .type(SecurityScheme.Type.HTTP)
+                .scheme("bearer")
+                .bearerFormat("JWT")));
+}
+```
+
+### Explanation
+
+**@Bean**
+
+Registers the OpenAPI object in the Spring application context.
+
+**OpenAPI**
+
+Represents the complete API specification.
+
+**Info**
+
+Contains general API information.
+
+**title**
+
+Defines the API name.
+
+**description**
+
+Explains the purpose and usage of the API.
+
+**version**
+
+Specifies the API documentation version.
+
+**Components**
+
+Contains reusable OpenAPI components, including security schemes and schemas.
+
+**SecurityScheme**
+
+Defines the authentication mechanism used by protected endpoints.
+
+---
+
+## 7. JWT Bearer Authentication in Swagger UI
+
+The Task Management API uses JWT-based authentication.
+
+After successful login, the application returns:
+
+- Access token.
+- Refresh token.
+- Token type.
+- Expiration information.
+
+The access token is used to authenticate requests to protected endpoints.
+
+### Bearer authentication configuration
+
+```java
+new SecurityScheme()
+    .type(SecurityScheme.Type.HTTP)
+    .scheme("bearer")
+    .bearerFormat("JWT")
+```
+
+### Explanation
+
+| Property | Meaning |
+|---|---|
+| type | HTTP authentication |
+| scheme | Bearer |
+| bearerFormat | JWT |
+
+Swagger UI uses this configuration to provide an Authorize option.
+
+### How to authorize requests
+
+1. Open Swagger UI.
+2. Execute the login endpoint.
+3. Copy the access token from the response.
+4. Click Authorize.
+5. Enter the access token.
+6. Confirm authorization.
+7. Execute protected endpoints.
+
+The token should be the JWT access token, not the refresh token.
+
+Swagger UI automatically sends the appropriate Authorization header for operations configured with the Bearer security requirement.
+
+Example:
+
+```http
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9...
+```
+
+### Important security distinction
+
+Access tokens and refresh tokens have different responsibilities.
+
+| Access Token | Refresh Token |
+|---|---|
+| Used to access protected APIs | Used to obtain a new token pair |
+| Short-lived | Longer-lived |
+| Sent as Bearer authentication | Submitted to the refresh endpoint |
+| Validated by JWT security filter | Validated by refresh-token service |
+
+Never use the refresh token as the Swagger Bearer token.
+
+---
+
+## 8. OpenAPI Annotations
+
+OpenAPI annotations provide additional information about controllers and API operations.
+
+The project uses annotations from:
+
+```java
+io.swagger.v3.oas.annotations
+```
+
+### 8.1 @Tag
+
+Groups related API endpoints.
+
+Example:
+
+```java
+@Tag(
+    name = "Tasks",
+    description = "Task operations scoped to the authenticated user."
+)
+```
+
+This groups task-related endpoints under the Tasks section in Swagger UI.
+
+### 8.2 @Operation
+
+Documents an individual API operation.
+
+Example:
+
+```java
+@Operation(
+    summary = "Create a task",
+    description = "Creates a task for the authenticated user."
+)
+```
+
+**summary** provides a short description.
+
+**description** provides additional details about the operation.
+
+### 8.3 @ApiResponse
+
+Documents one HTTP response.
+
+Example:
+
+```java
+@ApiResponse(
+    responseCode = "201",
+    description = "Task created"
+)
+```
+
+### 8.4 @ApiResponses
+
+Documents multiple possible responses.
+
+Example:
+
+```java
+@ApiResponses({
+    @ApiResponse(
+        responseCode = "201",
+        description = "Task created"
+    ),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Request validation failed"
+    ),
+    @ApiResponse(
+        responseCode = "401",
+        description = "Authentication required"
+    )
+})
+```
+
+### 8.5 @Parameter
+
+Documents request parameters and path variables.
+
+Example:
+
+```java
+@Parameter(
+    description = "Zero-based page index.",
+    example = "0"
+)
+@RequestParam(defaultValue = "0") int page
+```
+
+### 8.6 @SecurityRequirement
+
+Declares that an operation requires a particular security scheme.
+
+Example:
+
+```java
+@SecurityRequirement(name = "bearerAuth")
+```
+
+The name must match the security scheme configured in OpenApiConfig.
+
+### 8.7 @Schema
+
+Provides documentation for request and response models.
+
+Example:
+
+```java
+@Schema(
+    description = "Task title",
+    example = "Complete Spring Boot project"
+)
+```
+
+It can describe:
+
+- Field names.
+- Data types.
+- Examples.
+- Required fields.
+- Allowed values.
+- Validation constraints.
+- Read/write access.
+
+---
+
+## 9. Authentication API Documentation
+
+The project groups authentication endpoints under:
+
+```text
+/api/v1/auth
+```
+
+The controller uses the Authentication tag.
+
+### Documented endpoints
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| /register | POST | Register an account |
+| /login | POST | Authenticate a user |
+| /refresh | POST | Rotate a refresh token |
+| /logout | POST | Revoke a refresh-token family |
+| /change-password | POST | Change the current user's password |
+| /forgot-password | POST | Request password reset |
+| /reset-password | POST | Reset a password |
+
+### Public vs protected authentication endpoints
+
+The documentation distinguishes between public and protected endpoints.
+
+Public endpoints:
+
+- Registration.
+- Login.
+- Refresh.
+- Logout.
+- Forgot password.
+- Reset password.
+
+Protected endpoint:
+
+- Change password.
+
+The change-password operation declares:
+
+```java
+@SecurityRequirement(name = "bearerAuth")
+```
+
+This makes its JWT requirement visible in Swagger UI.
+
+### Security-conscious documentation
+
+The registration and password-reset descriptions explain that generic responses are used to avoid revealing whether an account exists.
+
+This documents an important security property without exposing internal implementation details.
+
+---
+
+## 10. Task Management API Documentation
+
+The task controller uses:
+
+```text
+/api/v1/tasks
+```
+
+It is grouped under the Tasks tag.
+
+The controller applies:
+
+```java
+@SecurityRequirement(name = "bearerAuth")
+```
+
+Therefore, task operations are documented as protected endpoints.
+
+### Documented endpoints
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| /api/v1/tasks | POST | Create task |
+| /api/v1/tasks | GET | List tasks |
+| /api/v1/tasks/{taskId} | GET | Get task |
+| /api/v1/tasks/{taskId} | PUT | Update task |
+| /api/v1/tasks/{taskId} | DELETE | Delete task |
+
+### Task ownership
+
+The documentation explains that task ownership is derived from the authenticated JWT principal.
+
+The client cannot provide a user ID to create or reassign task ownership.
+
+This is important because the API enforces user-level data isolation.
+
+---
+
+## 11. Pagination, Sorting and Filtering Documentation
+
+The task-list endpoint supports pagination, sorting, search and filters.
+
+These parameters are documented using @Parameter and @Schema annotations.
+
+| Parameter | Description | Default |
+|---|---|---|
+| page | Zero-based page index | 0 |
+| size | Tasks per page, maximum 100 | 10 |
+| sortBy | Field used for sorting | createdAt |
+| direction | asc or desc | desc |
+| search | Case-insensitive title search | Optional |
+| status | Task status filter | Optional |
+| priority | Task priority filter | Optional |
+| dueFrom | Inclusive lower due-date bound | Optional |
+| dueTo | Inclusive upper due-date bound | Optional |
+
+### Example request
+
+```http
+GET /api/v1/tasks?page=0&size=10&sortBy=createdAt&direction=desc&priority=HIGH
+```
+
+### Date filtering
+
+The API accepts ISO date values.
+
+Example:
+
+```text
+dueFrom=2026-01-01
+dueTo=2026-12-31
+```
+
+The lower and upper bounds are inclusive.
+
+The upper date must not be before the lower date.
+
+### Why document parameters?
+
+Clear parameter documentation helps frontend developers construct valid API requests and understand accepted values without reading service-layer implementation.
+
+---
+
+## 12. DTO Schema Documentation
+
+DTO means Data Transfer Object.
+
+DTOs define the data exchanged between clients and the backend.
+
+The project uses DTOs instead of exposing JPA entities directly.
+
+### Authentication DTOs
+
+Examples:
+
+- RegistrationRequest
+- LoginRequest
+- LoginResponse
+- RefreshTokenRequest
+- ChangePasswordRequest
+- ForgotPasswordRequest
+- ResetPasswordRequest
+- AuthMessageResponse
+
+### Task DTOs
+
+Examples:
+
+- CreateTaskRequest
+- UpdateTaskRequest
+- TaskResponse
+- TaskPageResponse
+
+### Error DTO
+
+- ApiErrorResponse
+
+### Why DTOs are important for API documentation
+
+DTOs provide a controlled representation of request and response data.
+
+They help:
+
+1. Prevent accidental exposure of database entities.
+2. Hide internal relationships.
+3. Control which fields clients can submit.
+4. Document validation constraints.
+5. Keep API contracts independent of database implementation.
+
+### Example
+
+A task creation request accepts fields such as:
+
+```json
+{
+  "title": "Prepare documentation",
+  "description": "Complete API documentation",
+  "priority": "HIGH",
+  "dueDate": "2026-12-01"
+}
+```
+
+The client does not submit a user ID.
+
+The authenticated user is resolved by the backend.
+
+---
+
+## 13. Write-Only Sensitive Fields
+
+Some DTO properties contain sensitive information.
+
+Examples:
+
+- Password.
+- Current password.
+- New password.
+- Refresh token.
+- Password-reset token.
+
+The project uses OpenAPI schema access settings such as:
+
+```java
+@Schema(accessMode = Schema.AccessMode.WRITE_ONLY)
+```
+
+### What does WRITE_ONLY mean?
+
+A write-only property is intended to be supplied in requests rather than exposed as an ordinary response property.
+
+This is useful for sensitive credentials.
+
+### Read-only vs write-only
+
+| Access mode | Meaning |
+|---|---|
+| READ_ONLY | Returned by the API but not intended as input |
+| WRITE_ONLY | Accepted as input but not intended as response output |
+| READ_WRITE | Used for both input and output |
+
+These settings improve the generated API schema, but they do not replace actual DTO design, serialization controls or security checks.
+
+---
+
+## 14. HTTP Response Documentation
+
+HTTP status codes communicate the outcome of API operations.
+
+The project documents relevant responses such as:
+
+| Status | Meaning |
+|---|---|
+| 200 | Successful request |
+| 201 | Resource created |
+| 202 | Request accepted |
+| 204 | Successful request with no response body |
+| 400 | Invalid request |
+| 401 | Authentication required or invalid |
+| 403 | Access forbidden |
+| 404 | Resource not found |
+| 429 | Rate limit exceeded |
+
+### Example: Task creation
+
+```http
+POST /api/v1/tasks
+```
+
+Expected successful response:
+
+```http
+HTTP/1.1 201 Created
+Location: /api/v1/tasks/42
+```
+
+The response body contains the created TaskResponse.
+
+### Example: Task deletion
+
+```http
+DELETE /api/v1/tasks/42
+```
+
+Expected successful response:
+
+```http
+HTTP/1.1 204 No Content
+```
+
+A 204 response does not contain a response body.
+
+### Why document error responses?
+
+Frontend developers need to understand how to handle:
+
+- Validation failures.
+- Missing authentication.
+- Forbidden operations.
+- Missing resources.
+- Rate limits.
+
+The project uses ApiErrorResponse for structured API error documentation.
+
+---
+
+## 15. API Documentation and Spring Security
+
+Spring Security protects application endpoints.
+
+Swagger UI and OpenAPI JSON also need appropriate access rules.
+
+The project permits these documentation paths:
+
+```java
+.requestMatchers(
+    "/v3/api-docs/**",
+    "/swagger-ui/**",
+    "/swagger-ui.html"
+).permitAll()
+```
+
+### Why permit these paths?
+
+The documentation interface must be accessible to developers without requiring a JWT just to open Swagger UI.
+
+However, allowing access to documentation does not mean allowing unauthenticated access to protected business endpoints.
+
+The actual task endpoints remain protected by JWT authentication.
+
+### Important distinction
+
+There are two separate concerns:
+
+1. Access to API documentation.
+2. Access to actual API operations.
+
+Swagger UI can be publicly accessible in development while protected task endpoints still require valid JWT access tokens.
+
+---
+
+## 16. Enabling and Disabling Documentation by Environment
+
+API documentation is useful during development but may not need to be publicly exposed in production.
+
+The project uses environment-based Springdoc properties.
+
+### Default application.properties
+
+```properties
+springdoc.api-docs.enabled=${API_DOCS_ENABLED:true}
+springdoc.swagger-ui.enabled=${API_DOCS_ENABLED:true}
+springdoc.swagger-ui.path=/swagger-ui.html
+```
+
+Documentation is enabled by default for local development.
+
+### Production application-prod.properties
+
+```properties
+springdoc.api-docs.enabled=${API_DOCS_ENABLED:false}
+springdoc.swagger-ui.enabled=${API_DOCS_ENABLED:false}
+```
+
+Documentation is disabled by default in production.
+
+### Override through environment variable
+
+To enable documentation deliberately:
+
+```powershell
+$env:API_DOCS_ENABLED = "true"
+```
+
+To disable documentation:
+
+```powershell
+$env:API_DOCS_ENABLED = "false"
+```
+
+### Why is this useful?
+
+It allows developers to use Swagger UI locally without automatically exposing the documentation endpoints in production.
+
+The environment-specific setting should be controlled deliberately during deployment.
+
+---
+
+## 17. OpenAPI Integration Testing
+
+The project contains two dedicated OpenAPI integration tests.
+
+### OpenApiDocumentationIntegrationTest
+
+This test verifies:
+
+- API title.
+- API version.
+- JWT Bearer security scheme.
+- Authentication endpoint paths.
+- Task endpoint paths.
+- Public login operation.
+- Protected change-password operation.
+- Protected task-list operation.
+- 401 and 403 response documentation.
+- Registration and login response schemas.
+- Task response schemas.
+- Pagination and filtering parameters.
+- Task status and priority enum values.
+- Password write-only schema.
+- Swagger UI availability.
+
+### OpenApiDisabledIntegrationTest
+
+This test verifies that the documentation endpoints are unavailable when OpenAPI and Swagger UI are disabled.
+
+It checks:
+
+```text
+/v3/api-docs
+/swagger-ui.html
+/swagger-ui/index.html
+```
+
+Expected result:
+
+```text
+404 Not Found
+```
+
+### Why integration tests?
+
+Unit tests can verify individual components, but integration tests help verify the actual generated OpenAPI document and the application's HTTP behavior.
+
+---
+
+## 18. How to Test APIs Through Swagger UI
+
+After starting the application locally:
+
+### Step 1
+
+Open:
+
+```text
+http://localhost:8080/swagger-ui/index.html
+```
+
+### Step 2
+
+Expand the Authentication section.
+
+### Step 3
+
+Execute the login endpoint using valid credentials.
+
+### Step 4
+
+Copy the access token from the response.
+
+### Step 5
+
+Click Authorize.
+
+### Step 6
+
+Enter the JWT access token.
+
+### Step 7
+
+Expand the Tasks section.
+
+### Step 8
+
+Execute protected task operations.
+
+### Step 9
+
+Inspect:
+
+- Request URL.
+- Request headers.
+- Request body.
+- HTTP status.
+- Response headers.
+- Response body.
+
+Swagger UI is useful for testing and understanding API behavior, but it does not replace automated integration tests.
+
+---
+
+## 19. Important Security Considerations
+
+1. Never expose JWT signing secrets in API documentation.
+2. Never use refresh tokens as Bearer access tokens.
+3. Do not expose password hashes.
+4. Avoid exposing internal JPA entity relationships.
+5. Keep sensitive request fields write-only in the generated schema where appropriate.
+6. Keep production documentation disabled by default unless there is an explicit reason to enable it.
+7. Do not weaken endpoint authorization to make Swagger testing easier.
+8. Remember that publicly accessible Swagger UI does not make protected API endpoints public.
+9. Do not include real credentials or tokens in OpenAPI examples.
+10. Continue enforcing server-side ownership checks independently of Swagger documentation.
+
+---
+
+## 20. Phase 6.4 Test Results and Verification Boundary
+
+The uploaded project contained Maven Surefire reports recording:
+
+- 146 tests.
+- 0 failures.
+- 0 errors.
+- 1 skipped.
+
+The OpenAPI-specific test reports recorded:
+
+- OpenApiDocumentationIntegrationTest: 2 tests passed.
+- OpenApiDisabledIntegrationTest: 1 test passed.
+
+The skipped test was the opt-in PostgreSQL integration test.
+
+Important verification boundary:
+
+These results were read from existing Surefire reports in the uploaded project. A fresh Maven test run was not completed during the independent review because the Maven wrapper could not download Maven 3.10.1 in that environment.
+
+Therefore, the reports provide evidence of a previous successful test execution, not a newly executed test run.
+
+PostgreSQL deployment and migration execution remain separate verification tasks.
+
+---
+
+## 21. Key Interview Questions and Answers
+
+### Q1. What is OpenAPI?
+
+OpenAPI is a standardized specification used to describe REST APIs in a machine-readable format.
+
+### Q2. What is Swagger UI?
+
+Swagger UI is a browser-based interface that displays an OpenAPI specification and allows developers to explore and test API endpoints.
+
+### Q3. What is the difference between OpenAPI and Swagger UI?
+
+OpenAPI describes the API structure. Swagger UI displays that specification in an interactive browser interface.
+
+### Q4. What is Springdoc OpenAPI?
+
+Springdoc OpenAPI is a library that integrates OpenAPI documentation generation with Spring Boot applications.
+
+### Q5. Why use Swagger UI?
+
+It allows developers to understand and test APIs without manually constructing requests in another API client.
+
+### Q6. What is JWT Bearer authentication?
+
+It is an HTTP authentication mechanism where the client sends a JWT access token in the Authorization header using the Bearer scheme.
+
+### Q7. What is @Operation?
+
+It documents an individual API operation, including its summary and description.
+
+### Q8. What is @Tag?
+
+It groups related API operations into logical sections in Swagger UI.
+
+### Q9. What is @ApiResponse?
+
+It documents a possible HTTP response for an API operation.
+
+### Q10. What is @SecurityRequirement?
+
+It declares that an API operation requires a configured security scheme, such as JWT Bearer authentication.
+
+### Q11. Why use DTOs with OpenAPI?
+
+DTOs provide controlled request and response structures and prevent direct exposure of internal persistence entities.
+
+### Q12. What is a write-only schema property?
+
+A write-only property is intended to be supplied in requests but not exposed as an ordinary response property.
+
+### Q13. Why disable Swagger UI in production?
+
+It reduces unnecessary exposure of API documentation and internal API structure.
+
+### Q14. Does allowing Swagger UI make protected APIs public?
+
+No. Documentation access and actual endpoint authorization are separate. Protected APIs still require authentication.
+
+### Q15. Does Swagger UI replace Postman or automated testing?
+
+No. Swagger UI is useful for interactive exploration, while Postman and automated tests serve additional testing and regression purposes.
+
+### Q16. What is the OpenAPI JSON endpoint?
+
+The default Springdoc OpenAPI JSON endpoint is:
+
+```text
+/v3/api-docs
+```
+
+### Q17. What is the default Swagger UI endpoint in this project?
+
+```text
+/swagger-ui/index.html
+```
+
+### Q18. Can Swagger UI automatically authenticate requests?
+
+It can attach the configured Bearer token to operations that declare the matching security requirement after the developer authorizes the interface.
+
+---
+
+## 22. Phase 6.4 Completion Summary
+
+Phase 6.4 implemented API documentation using Springdoc OpenAPI and Swagger UI.
+
+### Completed areas
+
+- Springdoc OpenAPI dependency.
+- OpenAPI 3 specification generation.
+- API metadata configuration.
+- JWT Bearer security scheme.
+- Authentication controller documentation.
+- Task controller documentation.
+- Public and protected endpoint distinction.
+- Request and response DTO schema documentation.
+- Pagination, sorting and filtering parameter documentation.
+- HTTP status and error response documentation.
+- Production documentation disablement by default.
+- OpenAPI enabled/disabled integration tests.
+
+### Verification
+
+Existing Surefire reports recorded 146 tests, 0 failures, 0 errors and 1 skipped. The PostgreSQL integration test was skipped.
+
+### Final assessment
+
+Phase 6.4 implementation review was approved based on the supplied source files and existing test reports.
+
+Minor optional refinements identified:
+
+- Document the Location response header on task creation.
+- Document Cache-Control response headers for authentication operations.
+- Explicitly document the public test endpoint's 200 response and string schema.
+
+These refinements were not considered blockers for Phase 6.4 approval.
+
+### Next Phase
+
+**Phase 6.5 — Production Testing and Security Hardening**
+
+The next phase will focus on validating production behavior, testing security boundaries, reviewing error handling and strengthening application reliability before Docker and deployment.
+
+
+--------------------------------------------------------------------------------------------------
+
+## 23. Phase 6.5 — Production Testing and Security Hardening
+
+Phase 6.5 reviewed the existing authentication, authorization, token lifecycle, OAuth2, HTTP security, error handling, production configuration and dependency set. The goal is to verify the controls that are actually present, add regression coverage for demonstrated gaps, and document deployment limitations; passing tests are evidence for covered cases, not proof that the application is completely production-secure.
+
+### Authentication and JWT security
+
+- Local credentials are authenticated through Spring Security, with BCrypt password hashes rather than plaintext passwords.
+- Registration and login validate request DTOs. Registration responses remain generic for both new and duplicate accounts to reduce account enumeration; login failures use a generic invalid-credentials response, including for nonexistent or disabled users.
+- Access tokens are signed JWTs. The verifier checks the configured signature algorithm/key, issuer, expiration and required claims; malformed, expired or incorrectly signed Bearer tokens are rejected before reaching protected endpoints.
+- The JWT signing secret is external configuration, Base64-decoded and checked for sufficient key material at startup. Production deployments must use a unique secret from a secret manager or equivalent protected environment, never a committed value.
+- A bearer token is a credential: keep it out of URLs, logs, analytics and browser storage where a safer client-side design is available. Use TLS for every production request. Access tokens remain usable until expiry unless additional revocation state is implemented; refresh-token revocation alone does not revoke already issued access JWTs.
+
+### Refresh-token rotation and replay detection
+
+- Refresh tokens are opaque, randomly generated credentials. The database stores a SHA-256 hash, not the raw token, so a database-only disclosure does not directly reveal a usable refresh credential.
+- Refresh exchanges rotate the token while preserving a session-family identifier. A rotated token cannot be used again; detected reuse revokes the family rather than silently creating another session.
+- Logout revokes the submitted token's family, while password changes and resets revoke the user's active refresh sessions. Database row locking and concurrent-refresh tests verify that two concurrent uses do not both succeed.
+- Clients should replace and securely erase the previous refresh token after each successful rotation. Never put refresh tokens in logs or URLs; send them over TLS and use the existing no-store response behavior.
+
+### Authorization and ownership isolation
+
+- The authenticated principal, not a request-body user identifier, determines task ownership. DTOs do not provide an authorization mechanism for selecting another user.
+- Task reads, updates and deletes are scoped by both task ID and owner ID. A cross-user lookup follows the same not-found response as a nonexistent task, reducing resource enumeration.
+- Listing, search, filters, sorting, pagination totals and page metadata must use the same owner scope. Integration coverage creates two users, verifies isolated lists and metadata, and checks that another user's task cannot be read, modified or deleted.
+- Authorization must be enforced at the service/data-access boundary as well as by the URL security rules; an authenticated user is not automatically authorized for every record.
+
+### Password and password-reset security
+
+- BCrypt is a one-way password hashing function designed to make offline guessing more expensive than a fast general-purpose hash. Password requirements and request validation are enforced before authentication data is changed.
+- Password reset credentials are random, stored as hashes, expire, and are single-use. Invalid, expired and reused reset tokens must not change a password. Reset requests use generic responses so an unknown email does not reveal account existence.
+- A successful password change or reset revokes refresh sessions. Tests should verify the new password works, the old one fails, and any previously issued refresh credentials cannot create another access-token session.
+- Do not write passwords, password hashes, reset tokens or refresh-token values to logs. This phase does not configure an email provider; delivery remains an integration responsibility.
+
+### Rate limiting
+
+- Login and password-reset requests use separate, bounded in-memory limiter state. The implementation applies limits to IP and normalized-account dimensions, expires windows, and avoids unbounded per-identity map growth. Rate-limit failures use HTTP 429 where the request is actively rejected; account-specific reset suppression remains generic.
+- Bounded fixed buckets can collide: unrelated identities may share a slot and be throttled together. This is a deliberate memory bound, not a distributed quota system.
+- The limiter is process-local: counters reset on restart, and separate application instances do not share state. It is not sufficient by itself for a horizontally scaled or hostile public deployment; consider a shared atomic store or gateway/WAF policy when operational requirements demand cross-instance enforcement.
+- When deployed behind a proxy, configure trusted client-address forwarding at the edge and ensure untrusted clients cannot spoof forwarded IP headers. Otherwise IP-based limits may see the proxy address or trust forged values.
+
+### OAuth2 and temporary session cleanup
+
+- Google OIDC and GitHub sign-in use Spring Security's authorization-code flow and state validation. Provider credentials are required only when that provider is enabled; tests use synthetic identities and do not contact providers.
+- External identities are associated by provider identity, not by accepting an unverified email match as proof of account ownership. Duplicate or conflicting external-account links must fail safely rather than silently attach a provider to another local account.
+- Provider access tokens, authorization codes and client secrets are not the application's JWT/refresh-token pair and must not be logged or returned to the frontend. OAuth failures return a generic response without provider exception details.
+- OAuth authorization state is held in the temporary HTTP session. The callback success and failure handlers now invalidate that session and expire the session cookie using configured name, path, domain, Secure, HttpOnly and SameSite settings. The success response retains the established JSON token-pair contract; tokens are not placed in cookies.
+- Production session cookies must be Secure over HTTPS, HttpOnly, and use an appropriate SameSite policy. TLS termination must be configured so the application and proxy agree on whether a request is secure; never disable Secure merely to compensate for an incorrectly configured proxy.
+
+### CORS and HTTP security headers
+
+- CORS allows explicitly configured origins, methods and headers. Wildcard origins and credentialed browser access are not required for this bearer-token API. A preflight request is distinct from authorization of the subsequent API operation.
+- `X-Content-Type-Options`, `X-Frame-Options` and `Referrer-Policy` are checked on API responses. HSTS is emitted only for secure requests so local HTTP development does not receive a policy that forces HTTPS unexpectedly.
+- HSTS is meaningful only when the production site is consistently served over HTTPS. Enable it at the application or trusted TLS edge, verify proxy forwarding, and only enable `includeSubDomains` when every covered subdomain supports HTTPS.
+
+### Error handling and information disclosure
+
+- API error bodies use a consistent timestamp/status/error/message/path/details shape. Validation details identify request fields; unexpected exceptions return safe generic messages rather than SQL, stack traces, credentials, hashes, filesystem paths or implementation class names.
+- The 401 authentication entry point and 403 access-denied handler do not echo underlying exception details. User-owned resources return consistent 404 responses across users. Rate-limit responses use 429; validation errors use 400; unexpected failures use 500.
+- Duplicate registration intentionally remains generic rather than returning 409, because a conflict response would reveal that an account exists. A 409 is appropriate only where the API contract can return it without exposing protected account state.
+- Detailed diagnostics belong in access-controlled server logs, with secrets and credentials redacted. A safe client response does not justify suppressing useful server-side investigation data.
+
+### Production configuration and reliability
+
+- Production configuration requires PostgreSQL and explicit database, JWT and CORS configuration. OAuth client credentials are validated only for enabled providers. Cookie Secure is enabled by production defaults; Swagger/OpenAPI is disabled unless explicitly enabled.
+- Hibernate uses schema validation, not automatic production schema creation/update. Flyway manages schema migrations; `flyway.clean` remains disabled. SQL display and formatting logs remain off in production. Existing Flyway V1/V2 migrations are not changed by this phase.
+- Hikari pool parameters are configurable and must be sized for the database's connection budget and validated under expected concurrency. A successful application startup is not a load test or proof of adequate capacity.
+- The PostgreSQL Testcontainers check is opt-in. H2 tests do not establish PostgreSQL locking, SQL-dialect or operational behavior; PostgreSQL verification must be reported only when Docker and the container test actually run.
+- Production secrets, OAuth callbacks, proxy/TLS behavior, database backups, monitoring and rate limits must be validated in the real deployment environment. Tests with H2 and mock OAuth providers cannot prove those operational controls.
+
+### Dependency security review (2026-11-25)
+
+- The resolved Maven tree includes Spring Boot `3.5.7`, Spring Security `6.5.6`, Spring Framework `6.2.12`, JJWT `0.12.6`, Springdoc `2.8.17`, Flyway `11.7.2` and PostgreSQL JDBC `42.7.8`. No duplicate application dependency was identified in the inspected tree.
+- Current Spring advisories list versions in this dependency set as affected for some conditional issues. For example, [CVE-2026-59273](https://spring.io/security/cve-2026-59273) applies to Spring Security 6.5.x versions through 6.5.12 when attacker-controlled input is bound to an `ELRequestMatcher`/`RequestMatcher` property. No such matcher or binding path was found in this project; this is a version/advisory match, not a confirmed exploitable path here.
+- [CVE-2026-59414](https://spring.io/security/cve-2026-59414) covers Spring Boot 3.5.x through 3.5.17 when the affected `EndpointRequest`/`PathRequest` matchers are configured with trailing-slash paths. The project has a custom security chain and no Actuator dependency or use of these matcher APIs was found. The H2 console is enabled only in the development profile and disabled in production.
+- [CVE-2026-59374](https://spring.io/security/cve-2026-59374) affects Spring Framework versions through 6.2.20 when restrictive `DataBinder` allowed/disallowed-field patterns are used with indexed properties. No `WebDataBinder`, `@InitBinder`, or allowed/disallowed-field configuration was found; JSON DTO binding is used instead.
+- Spring Boot advisories [CVE-2026-40975](https://spring.io/security/cve-2026-40975) (weak `${random.*}` values used as secrets), CVE-2026-40973 (persistent session temporary-directory conditions), and CVE-2026-40977 (`ApplicationPidFileWriter`) are conditional. The reviewed configuration uses an externally supplied JWT secret and does not enable persistent sessions or configure `ApplicationPidFileWriter`.
+- These were manual source/advisory checks, not a complete automated CVE/SBOM scan. Conditional exposure must be rechecked whenever dependencies or configuration change. No broad dependency upgrade was made; select supported fixed versions and evaluate compatibility as a separately reviewed change.
+
+### Security testing strategy
+
+- Use JUnit 5 for deterministic unit tests, Mockito for isolated collaborators, and Spring Boot Test + MockMvc for HTTP/security integration tests. H2 provides repeatable local database coverage; PostgreSQL Testcontainers remains opt-in.
+- Cover both positive and negative paths: valid/invalid credentials, disabled accounts, absent/malformed/expired/wrong-signature JWTs, token rotation/reuse/concurrency, cross-user access, reset expiry/single-use, rate-limit windows/capacity, OAuth state failures, CORS preflights, secure-cookie cleanup, HSTS, safe error responses and production startup validation.
+- Keep tests independent of real email, Google/GitHub credentials, production secrets and external PostgreSQL. Assert observable HTTP status, safe response shape, state changes and ownership—not private implementation details unless they are security invariants such as storing only token hashes.
+- Run targeted tests first and the full ordinary Maven suite afterward. Report skipped tests and unavailable infrastructure explicitly; never equate a skipped PostgreSQL container test with PostgreSQL verification.
+
+### Interview questions and answers
+
+#### Q1. Why hash refresh tokens before storing them?
+
+A refresh token is a bearer credential. Storing only its cryptographic hash limits direct token theft if a database backup or read-only database account is exposed.
+
+#### Q2. What is refresh-token rotation?
+
+The server invalidates the presented refresh token and issues a new one for the same session family. A token should be accepted only once.
+
+#### Q3. What is refresh-token reuse detection?
+
+If an already rotated token is presented again, the server treats it as possible theft and revokes the associated token family instead of silently continuing the session.
+
+#### Q4. Why keep access JWT lifetimes short?
+
+JWTs are usually validated without a database lookup, so an already issued access token is difficult to revoke immediately. A short lifetime limits the time window if it is stolen.
+
+#### Q5. How is task ownership enforced?
+
+The server derives the user from the authenticated principal and includes that owner in repository/service queries. A client-supplied user ID is not authorization.
+
+#### Q6. Why return 404 for another user's task?
+
+Using the same not-found response for absent and non-owned records avoids disclosing whether another user's resource exists.
+
+#### Q7. Why use BCrypt instead of encrypting passwords?
+
+Password verification needs to compare a candidate, not recover the original password. A one-way, salted, deliberately expensive hash raises the cost of offline password guessing.
+
+#### Q8. Why should password-reset responses be generic?
+
+Different messages for known and unknown accounts let an attacker enumerate users. A generic response communicates the same public outcome in both cases.
+
+#### Q9. Why is in-memory rate limiting insufficient for multiple instances?
+
+Each instance has independent counters that reset on restart. A client can distribute requests across instances unless a shared gateway or atomic distributed store enforces the limit.
+
+#### Q10. What does OAuth2 `state` protect?
+
+The callback must correlate with an authorization request initiated by that browser session. Checking state helps prevent login CSRF and response substitution.
+
+#### Q11. What is the difference between CORS and authentication?
+
+CORS is a browser rule controlling whether frontend JavaScript may read a cross-origin response. It does not authenticate a caller or authorize an API operation.
+
+#### Q12. Why keep stack traces out of API responses?
+
+Stack traces can reveal internals and secrets to clients. The server should log controlled diagnostic detail while returning a stable, safe error response.
+
+#### Q13. What does HSTS do?
+
+It tells browsers to use HTTPS for future requests to a host. It must be sent only through HTTPS and requires a deliberate deployment decision for subdomains.
+
+#### Q14. What does Hibernate `validate` guarantee?
+
+It checks that mapped entities are compatible with the existing schema at startup. It does not create or migrate schema; Flyway remains responsible for controlled schema changes.
+
+#### Q15. Does a passing security test suite prove production security?
+
+No. Tests cover defined scenarios and configurations. Real identity-provider behavior, PostgreSQL operations, proxy/TLS settings, secrets, monitoring, backups and load still need environment-specific verification.
+
+This concludes Phase 6.5; the next section documents Phase 6.6.
+Recheck advisory applicability and fixed-version availability against vendor guidance before release.
+
+
+## 24. Phase 6.6 — End-to-End API Integration Testing
+
+This phase validates important application workflows through HTTP rather than testing only isolated methods. A passing integration suite is evidence for its covered scenarios and configuration, not proof of complete production readiness.
+
+### Unit, integration, and end-to-end testing
+
+- A unit test isolates one component and substitutes collaborators; an integration test verifies cooperating components such as Spring Security, MVC, services, repositories, migrations, and the test database.
+- An end-to-end API test validates a user's workflow through the externally visible request/response contract. `MockMvc` runs in-process, so it is an HTTP application integration boundary, not a real socket, deployment, or browser test.
+- Use fast unit tests for focused logic and a smaller set of full-context tests for framework wiring and workflows that cross application layers.
+
+### MockMvc, SpringBootTest, and lifecycle
+
+- `@SpringBootTest` loads the application context; `@AutoConfigureMockMvc` allows requests through the configured MVC and security filter chains without launching a network listener.
+- Exercise actual JSON binding, validation, authentication filters, exception advice, DTO mapping, and persistence. Do not bypass JWT behavior with a mocked principal when validating the token workflow.
+- Spring caches contexts and test databases can retain records. Use unique emails and resource data, avoid fixed IDs and test ordering, and understand when transactions do or do not include asynchronous/concurrent work.
+
+### HTTP contract and authentication workflows
+
+- Assert HTTP status, `Content-Type`, JSON names and values, validation details, and applicable headers such as `Location` and `Cache-Control`. Check resulting database state where it proves an operation's effect.
+- Registration/login tests should cover success, duplicate or unknown accounts, malformed JSON, missing fields, invalid values, and wrong credentials. Keep generic responses generic and assert that responses never serialize password hashes.
+- Use the issued access JWT against a protected route; test absent and malformed Bearer headers and expired, wrong-signature, wrong-issuer, and malformed-claim tokens. Safe failures must not disclose secrets, exception details, or stack traces.
+
+### JWT, refresh tokens, and logout
+
+- Generate deterministic JWT test cases with the configured test key and issuer. Successful HTTP authentication checks the whole chain: token parsing, signature/claim validation, principal lookup, and authorization.
+- Refresh-token workflow tests should verify replacement issuance, old-token rejection, hashed-at-rest persistence, reuse detection, family revocation, and concurrent-use behavior where locking is important.
+- Logout revokes refresh capability, but does not automatically invalidate an already-issued stateless access JWT. Verify the current access-token behavior rather than assuming immediate revocation.
+
+### Authorization and ownership isolation
+
+- Use at least two independently authenticated users. Verify cross-user read/update/delete follows the same not-found contract as an absent resource, and client-supplied ownership fields cannot change the authenticated owner.
+- Check task lists, searches, filters, sorting, page totals, and metadata for owner scope. Metadata can leak data even when the returned records are correctly filtered.
+- Include unauthenticated requests to protected routes to confirm the security chain rejects them before protected data is returned.
+
+### Database isolation and test data
+
+- H2 provides fast repeatable integration coverage and can run the project's migrations, but it does not prove PostgreSQL dialect, collation, locking, query planning, or production operations.
+- Prefer unique test fixtures and targeted state assertions. Avoid destructive shared cleanup and fixed generated IDs. Do not make the default suite depend on Docker, PostgreSQL, real Google/GitHub credentials, email, or external network access.
+- PostgreSQL Testcontainers verification is established only when that test actually ran; skipped or unavailable container runs must be reported as such.
+
+### Pagination, sorting, and filtering
+
+- Drive pagination and sorting through the HTTP query parameters. Assert the returned rows and relevant metadata such as page number, size, total elements/pages, and empty/first/last flags where the response provides them.
+- Cover ascending/descending supported sorts (including ID, title, and due date), title search, status, priority, date bounds, combined filters, empty results, and invalid page/size/sort/filter values.
+- Sorting must use an explicit allowlist, not arbitrary entity paths. Every query and its metadata must remain owner-scoped.
+
+### Error-response contracts and disclosure
+
+- Validate representative 400, 401, 403, 404, 409 where the contract uses it, 429, and 500 responses. Assert consistent safe error fields and avoid brittle assertions on timestamps or localized framework text.
+- Client errors must not expose SQL, stack traces, class names, filesystem paths, credentials, password hashes, or token hashes. Keep useful diagnostics in controlled server logs with secrets redacted.
+- Account-enumeration protections may intentionally use a generic 202 or 401 response instead of 409; test the existing security contract rather than changing status codes to satisfy a generic convention.
+
+### OAuth callbacks
+
+- Do not contact Google/GitHub in the default suite. Use synthetic provider identities to verify OAuth state handling, invalid/missing state, callback failure, session invalidation, and cookie expiry.
+- Assert that successful callbacks retain the existing token-pair JSON contract and failures do not expose provider details or issue tokens. Mock tests do not validate real provider registration, redirect URIs, or remote availability.
+
+### OpenAPI contract validation
+
+- Fetch `/v3/api-docs` and verify paths, methods, request/response schema references, error responses, pagination/filter parameters, and security declarations.
+- Public routes must remain public in the document; protected task/password operations should declare bearer authentication. Passwords should be write-only. Compare documentation with runtime HTTP behavior because generated OpenAPI is not itself proof that endpoints behave as described.
+
+### Common integration-test mistakes
+
+- Testing only service methods and assuming that request binding, filters, or exception handling work.
+- Weakening security or mocking away the JWT filter to make tests pass.
+- Depending on fixed IDs, shared state, or execution order.
+- Asserting only status without checking response fields, headers, or resulting state.
+- Checking task ownership on point reads while ignoring list counts and search/filter/page metadata.
+- Treating H2 as PostgreSQL verification, or a skipped Docker test as a pass.
+- Calling external OAuth/email services from ordinary tests or overfitting assertions to incidental serialization details.
+
+### Interview questions and answers
+
+#### Q1. How do unit and integration tests differ?
+
+A unit test isolates one unit with substituted dependencies; an integration test verifies multiple real components work together, often including framework configuration and persistence.
+
+#### Q2. Is MockMvc a network end-to-end test?
+
+No. It invokes Spring MVC and filters in-process without a socket. It does not validate TLS termination, a gateway, or the deployed server.
+
+#### Q3. Why create two users in an ownership test?
+
+Successful access by one user does not prove isolation. A second principal exposes missing owner predicates and metadata leaks.
+
+#### Q4. Why assert pagination totals as well as records?
+
+Totals can reveal another user's matching records even when every returned row is correctly filtered.
+
+#### Q5. What can H2 not verify?
+
+H2 does not establish PostgreSQL-specific SQL, collation, locking, or operational behavior. Use an actual PostgreSQL-backed test for those properties.
+
+#### Q6. Does a passing integration suite prove production security?
+
+No. It demonstrates only the tested cases and settings. Secrets, TLS/proxy configuration, provider behavior, PostgreSQL, monitoring, backups, and load need separate validation.
+
+This concludes Phase 6.6; no subsequent phase is included.
+
+For the complete expanded material, see `Phase_6_6_Learning_Concepts.md`.
+

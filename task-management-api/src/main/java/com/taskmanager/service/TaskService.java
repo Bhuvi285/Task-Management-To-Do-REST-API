@@ -23,7 +23,7 @@ public class TaskService {
 
     private static final int MAX_PAGE_SIZE = 100;
     private static final List<String> ALLOWED_SORT_FIELDS = List.of(
-            "createdAt", "updatedAt", "dueDate", "title", "status", "priority"
+            "id", "createdAt", "updatedAt", "dueDate", "title", "status", "priority"
     );
 
     private final TaskRepository taskRepository;

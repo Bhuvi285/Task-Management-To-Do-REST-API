@@ -59,6 +59,7 @@ com\taskmanager\dto\error\ApiErrorResponse.class
 com\taskmanager\dto\task\TaskResponse.class
 com\taskmanager\dto\auth\AuthMessageResponse.class
 com\taskmanager\config\PasswordConfig.class
+com\taskmanager\config\ProductionDatabaseConfigurationValidator.class
 com\taskmanager\config\AuthSecurityProperties.class
 com\taskmanager\config\JwtConfiguration.class
 com\taskmanager\config\OAuth2ClientConfiguration.class
@@ -77,7 +78,9 @@ com\taskmanager\controller\TaskController.class
 com\taskmanager\TaskManagementApplication.class
 com\taskmanager\security\OAuth2AuthenticationSuccessHandler.class
 com\taskmanager\service\JwtService.class
+com\taskmanager\config\OpenApiConfig.class
 com\taskmanager\dto\task\TaskPageResponse.class
 com\taskmanager\entity\OAuthAccount.class
 com\taskmanager\dto\auth\LoginResponse.class
+com\taskmanager\security\OAuth2SessionCleanup.class
 com\taskmanager\dto\auth\RegistrationRequest.class
