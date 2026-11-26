@@ -3,36 +3,58 @@ package com.taskmanager.repository;
 import com.taskmanager.entity.Task;
 import com.taskmanager.enums.TaskPriority;
 import com.taskmanager.enums.TaskStatus;
+import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Locale;
 import java.util.Optional;
 
-public interface TaskRepository extends JpaRepository<Task, Long> {
+public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificationExecutor<Task> {
 
-    @Query("""
-            select task
-            from Task task
-            where task.user.id = :userId
-              and (:status is null or task.status = :status)
-              and (:priority is null or task.priority = :priority)
-              and (:title is null or lower(task.title) like lower(concat('%', :title, '%')))
-              and (:dueFrom is null or task.dueDate >= :dueFrom)
-              and (:dueTo is null or task.dueDate <= :dueTo)
-            """)
-    Page<Task> findOwnedTasks(
-            @Param("userId") Long userId,
-            @Param("status") TaskStatus status,
-            @Param("priority") TaskPriority priority,
-            @Param("title") String title,
-            @Param("dueFrom") LocalDate dueFrom,
-            @Param("dueTo") LocalDate dueTo,
+    default Page<Task> findOwnedTasks(
+            Long userId,
+            TaskStatus status,
+            TaskPriority priority,
+            String title,
+            LocalDate dueFrom,
+            LocalDate dueTo,
             Pageable pageable
-    );
+    ) {
+        Specification<Task> specification = (root, query, criteriaBuilder) -> {
+            var predicates = new ArrayList<Predicate>();
+            predicates.add(criteriaBuilder.equal(root.get("user").get("id"), userId));
+            if (status != null) {
+                predicates.add(criteriaBuilder.equal(root.<TaskStatus>get("status"), status));
+            }
+            if (priority != null) {
+                predicates.add(criteriaBuilder.equal(root.<TaskPriority>get("priority"), priority));
+            }
+            if (title != null) {
+                predicates.add(criteriaBuilder.like(
+                        criteriaBuilder.lower(root.<String>get("title")),
+                        "%" + title.toLowerCase(Locale.ROOT) + "%"
+                ));
+            }
+            if (dueFrom != null) {
+                predicates.add(criteriaBuilder.greaterThanOrEqualTo(
+                        root.<LocalDate>get("dueDate"), dueFrom
+                ));
+            }
+            if (dueTo != null) {
+                predicates.add(criteriaBuilder.lessThanOrEqualTo(
+                        root.<LocalDate>get("dueDate"), dueTo
+                ));
+            }
+            return criteriaBuilder.and(predicates.toArray(Predicate[]::new));
+        };
+        return findAll(specification, pageable);
+    }
 
     Optional<Task> findByIdAndUserId(Long taskId, Long userId);
 
