@@ -5,7 +5,6 @@ import type {
   ForgotPasswordRequest,
   LoginRequest,
   LoginResponse,
-  RefreshTokenRequest,
   RegistrationRequest,
   ResetPasswordRequest,
 } from "@/features/auth/types";
@@ -17,7 +16,9 @@ export const authService = {
   },
 
   async login(payload: LoginRequest): Promise<LoginResponse> {
-    const { data } = await apiClient.post<LoginResponse>("/auth/login", payload);
+    const { data } = await apiClient.post<LoginResponse>("/auth/login", payload, {
+      withCredentials: true,
+    });
     return data;
   },
 
@@ -25,8 +26,10 @@ export const authService = {
     return refreshAccessTokenSingleFlight();
   },
 
-  async logout(payload: RefreshTokenRequest): Promise<void> {
-    await apiClient.post("/auth/logout", payload);
+  async logout(): Promise<void> {
+    await apiClient.post("/auth/logout", undefined, {
+      withCredentials: true,
+    });
   },
 
   async forgotPassword(payload: ForgotPasswordRequest): Promise<AuthMessageResponse> {
@@ -49,6 +52,7 @@ export const authService = {
     const { data } = await apiClient.post<AuthMessageResponse>(
       "/auth/change-password",
       payload,
+      { withCredentials: true },
     );
     return data;
   },

@@ -285,7 +285,15 @@ class AuthControllerIntegrationTest {
                 "Cache-Control",
                 org.hamcrest.Matchers.containsString("no-store")
             ))
-            .andExpect(header().doesNotExist("Set-Cookie"))
+            .andExpect(header().string(
+                "Set-Cookie",
+                org.hamcrest.Matchers.allOf(
+                    org.hamcrest.Matchers.containsString("taskflow_refresh_token="),
+                    org.hamcrest.Matchers.containsString("HttpOnly"),
+                    org.hamcrest.Matchers.containsString("SameSite=Lax"),
+                    org.hamcrest.Matchers.containsString("Path=/api/v1/auth")
+                )
+            ))
             .andExpect(jsonPath("$.accessToken").isNotEmpty())
             .andExpect(jsonPath("$.refreshToken").isNotEmpty())
             .andExpect(jsonPath("$.tokenType").value("Bearer"))

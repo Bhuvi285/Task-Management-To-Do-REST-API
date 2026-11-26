@@ -38,25 +38,21 @@ export async function refreshAccessTokenSingleFlight(): Promise<LoginResponse> {
     return activeRefreshPromise;
   }
 
-  const refreshToken = tokenStore.getRefreshToken();
-  if (!refreshToken) {
-    tokenStore.notifyAuthCleared();
-    throw normalizeApiError(new Error("No refresh token available."));
-  }
-
   activeRefreshPromise = (async () => {
     try {
-      // Use bare axios so this request never triggers the apiClient response interceptor
+      // Cookie-based refresh: browser sends the HttpOnly refresh cookie automatically
+      // when withCredentials is true. Bare axios avoids triggering apiClient interceptors.
       const response = await axios.post<LoginResponse>(
         `${env.API_BASE_URL}/auth/refresh`,
-        { refreshToken },
+        undefined,
         {
+          withCredentials: true,
           headers: { "Content-Type": "application/json" },
           timeout: 15_000,
         },
       );
       const data = response.data;
-      tokenStore.setTokens(data.accessToken, data.refreshToken);
+      tokenStore.setAccessToken(data.accessToken);
       return data;
     } catch (err) {
       tokenStore.notifyAuthCleared();

@@ -1,16 +1,13 @@
 package com.taskmanager.security;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.taskmanager.dto.auth.LoginResponse;
 import com.taskmanager.entity.RefreshToken;
 import com.taskmanager.entity.User;
 import com.taskmanager.exception.InvalidCredentialsException;
 import com.taskmanager.repository.RefreshTokenRepository;
 import com.taskmanager.repository.UserRepository;
-import com.taskmanager.service.JwtService;
 import com.taskmanager.service.RefreshTokenGenerator;
 import com.taskmanager.service.RefreshTokenLifecycleService;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,19 +16,21 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.authority.AuthorityUtils;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.oauth2.core.user.OAuth2User;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.mockito.Mockito.mock;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -56,60 +55,56 @@ class OAuth2AuthenticationSuccessHandlerIntegrationTest {
     private RefreshTokenGenerator refreshTokenGenerator;
 
     @Autowired
-    private JwtService jwtService;
-
-    @Autowired
-    private ObjectMapper objectMapper;
-
-    @Autowired
     private PasswordEncoder passwordEncoder;
 
     @Autowired
     private MockMvc mockMvc;
 
     @Test
-    void googleAndGithubIssueApplicationTokenPairsAndIndependentRefreshSessions()
-        throws Exception {
+    void googleAndGithubIssueHttpOnlyRefreshCookiesAndIndependentSessions() throws Exception {
         User user = createUser("social-session");
-        LoginResponse google = authenticate(
-            user,
+        String googleRefresh = authenticateAndExtractRefreshCookie(
             "google",
             new LocalOidcUser(mock(OidcUser.class), user)
         );
-        LoginResponse github = authenticate(
-            user,
+        String githubRefresh = authenticateAndExtractRefreshCookie(
             "github",
             new LocalOAuth2User(mock(OAuth2User.class), user)
         );
 
-        assertThat(jwtService.extractSubject(google.accessToken())).isEqualTo(user.getEmail());
-        assertThat(jwtService.extractSubject(github.accessToken())).isEqualTo(user.getEmail());
-        assertThat(google.refreshToken()).isNotEqualTo(github.refreshToken());
-        RefreshToken googleStored = storedToken(google.refreshToken());
-        RefreshToken githubStored = storedToken(github.refreshToken());
+        assertThat(googleRefresh).isNotEqualTo(githubRefresh);
+        RefreshToken googleStored = storedToken(googleRefresh);
+        RefreshToken githubStored = storedToken(githubRefresh);
         assertThat(googleStored.getTokenFamilyId()).isNotEqualTo(githubStored.getTokenFamilyId());
 
-        RefreshTokenLifecycleService.RotationResult rotation =
-            refreshTokenLifecycleService.rotate(google.refreshToken());
-        assertThat(rotation.status())
-            .isEqualTo(RefreshTokenLifecycleService.RotationStatus.SUCCESS);
-        LoginResponse rotated = rotation.tokenPair();
-        assertThat(rotated).isNotNull();
-        assertThat(storedToken(rotated.refreshToken()).getTokenFamilyId())
+        // Cookie-based refresh rotates the refresh cookie and returns accessToken
+        MvcResult refreshResult = mockMvc.perform(post("/api/v1/auth/refresh")
+                .header("Origin", "http://localhost:3000")
+                .cookie(new Cookie("taskflow_refresh_token", googleRefresh)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.accessToken").isNotEmpty())
+            .andExpect(jsonPath("$.refreshToken").doesNotExist())
+            .andReturn();
+
+        Cookie rotatedCookie = refreshResult.getResponse().getCookie("taskflow_refresh_token");
+        assertThat(rotatedCookie).isNotNull();
+        assertThat(rotatedCookie.isHttpOnly()).isTrue();
+        assertThat(rotatedCookie.getValue()).isNotEqualTo(googleRefresh);
+        assertThat(storedToken(rotatedCookie.getValue()).getTokenFamilyId())
             .isEqualTo(googleStored.getTokenFamilyId());
-        refreshTokenLifecycleService.revokeFamilyForToken(rotated.refreshToken());
+
+        // Reusing the old Google refresh cookie revokes the Google family, leaving GitHub intact
+        mockMvc.perform(post("/api/v1/auth/refresh")
+                .header("Origin", "http://localhost:3000")
+                .cookie(new Cookie("taskflow_refresh_token", googleRefresh)))
+            .andExpect(status().isUnauthorized());
+
         assertThat(refreshTokenRepository.countActiveByTokenFamilyId(
             googleStored.getTokenFamilyId()
         )).isZero();
-        assertThat(refreshTokenLifecycleService.rotate(google.refreshToken()).status())
-            .isEqualTo(RefreshTokenLifecycleService.RotationStatus.REUSED);
         assertThat(refreshTokenRepository.countActiveByTokenFamilyId(
             githubStored.getTokenFamilyId()
         )).isEqualTo(1);
-
-        mockMvc.perform(get("/api/v1/protected")
-                .header("Authorization", "Bearer " + github.accessToken()))
-            .andExpect(status().isNotFound());
     }
 
     @Test
@@ -121,6 +116,7 @@ class OAuth2AuthenticationSuccessHandlerIntegrationTest {
         assertThatThrownBy(() ->
             refreshTokenLifecycleService.issueForUser(disabledUser.getEmail())
         ).isInstanceOf(InvalidCredentialsException.class);
+
         MockHttpServletResponse disabledResponse = new MockHttpServletResponse();
         successHandler.onAuthenticationSuccess(
             request("/login/oauth2/code/google"),
@@ -130,7 +126,7 @@ class OAuth2AuthenticationSuccessHandlerIntegrationTest {
                 new LocalOidcUser(mock(OidcUser.class), disabledUser)
             )
         );
-        assertGenericFailure(disabledResponse);
+        assertGenericFailureRedirect(disabledResponse);
 
         MockHttpServletResponse missingResponse = new MockHttpServletResponse();
         successHandler.onAuthenticationSuccess(
@@ -144,12 +140,12 @@ class OAuth2AuthenticationSuccessHandlerIntegrationTest {
                 )
             )
         );
-        assertGenericFailure(missingResponse);
+        assertGenericFailureRedirect(missingResponse);
         assertThat(refreshTokenRepository.count()).isEqualTo(tokenCountBefore);
     }
 
     @Test
-    void providerFailureReturnsGenericJsonAndNeverIssuesTokens() throws Exception {
+    void providerFailureRedirectsSafelyToLoginAndNeverIssuesTokens() throws Exception {
         long tokenCountBefore = refreshTokenRepository.count();
         MockHttpServletResponse response = new MockHttpServletResponse();
         failureHandler.onAuthenticationFailure(
@@ -160,14 +156,13 @@ class OAuth2AuthenticationSuccessHandlerIntegrationTest {
             )
         );
 
-        assertGenericFailure(response);
-        assertThat(response.getContentAsString())
+        assertGenericFailureRedirect(response);
+        assertThat(response.getHeader("Location"))
             .doesNotContain("provider-specific-secret-bearing-error");
         assertThat(refreshTokenRepository.count()).isEqualTo(tokenCountBefore);
     }
 
-    private LoginResponse authenticate(
-        User user,
+    private String authenticateAndExtractRefreshCookie(
         String registrationId,
         OAuth2User principal
     ) throws Exception {
@@ -178,20 +173,15 @@ class OAuth2AuthenticationSuccessHandlerIntegrationTest {
             authentication(registrationId, principal)
         );
 
-        assertThat(response.getStatus()).isEqualTo(HttpServletResponse.SC_OK);
-        assertThat(response.getContentType()).startsWith("application/json");
+        assertThat(response.getStatus()).isEqualTo(HttpServletResponse.SC_FOUND);
+        assertThat(response.getHeader("Location")).isEqualTo("http://localhost:3000/dashboard");
         assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
         assertThat(response.getHeader("Pragma")).isEqualTo("no-cache");
-        assertThat(jwtService.extractSubject(
-            objectMapper.readTree(response.getContentAsString())
-                .get("accessToken").asText()
-        )).isEqualTo(user.getEmail());
-        JsonNode json = objectMapper.readTree(response.getContentAsString());
-        assertThat(json.fieldNames()).toIterable()
-            .containsExactlyInAnyOrder("accessToken", "refreshToken", "tokenType", "expiresIn");
-        assertThat(json.get("tokenType").asText()).isEqualTo("Bearer");
-        assertThat(json.get("expiresIn").asLong()).isEqualTo(900);
-        return objectMapper.treeToValue(json, LoginResponse.class);
+        Cookie cookie = response.getCookie("taskflow_refresh_token");
+        assertThat(cookie).isNotNull();
+        assertThat(cookie.isHttpOnly()).isTrue();
+        assertThat(cookie.getValue()).isNotBlank();
+        return cookie.getValue();
     }
 
     private OAuth2AuthenticationToken authentication(
@@ -220,13 +210,13 @@ class OAuth2AuthenticationSuccessHandlerIntegrationTest {
         return token;
     }
 
-    private void assertGenericFailure(MockHttpServletResponse response) throws Exception {
-        assertThat(response.getStatus()).isEqualTo(HttpServletResponse.SC_UNAUTHORIZED);
-        assertThat(response.getContentType()).startsWith("application/json");
+    private void assertGenericFailureRedirect(MockHttpServletResponse response) {
+        assertThat(response.getStatus()).isEqualTo(HttpServletResponse.SC_FOUND);
+        assertThat(response.getHeader("Location"))
+            .isEqualTo("http://localhost:3000/auth/login?error=oauth_failed");
         assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
         assertThat(response.getHeader("Pragma")).isEqualTo("no-cache");
-        assertThat(objectMapper.readTree(response.getContentAsString()).get("message").asText())
-            .isEqualTo("Social authentication failed.");
+        assertThat(response.getCookie("taskflow_refresh_token")).isNull();
     }
 
     private MockHttpServletRequest request(String requestUri) {

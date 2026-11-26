@@ -34,6 +34,7 @@ D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\jav
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\enums\OAuthProvider.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\enums\TaskPriority.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\enums\TaskStatus.java
+D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\exception\CsrfOriginValidationException.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\exception\DuplicateEmailException.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\exception\InvalidCredentialsException.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\exception\InvalidPasswordResetTokenException.java
@@ -62,6 +63,7 @@ D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\jav
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\OAuth2AuthenticationSuccessHandler.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\OAuth2SessionCleanup.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\PasswordResetTokenDelivery.java
+D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\RefreshTokenCookieService.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\SmtpPasswordResetTokenDelivery.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\TaskManagerUserDetailsService.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\TaskManagerUserPrincipal.java

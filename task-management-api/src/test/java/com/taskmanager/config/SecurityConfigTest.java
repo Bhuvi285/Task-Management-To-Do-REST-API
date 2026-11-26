@@ -80,7 +80,7 @@ class SecurityConfigTest {
     }
 
     @Test
-    void corsAllowsOnlyTheConfiguredFrontendWithoutCredentials() {
+    void corsAllowsOnlyTheConfiguredFrontendWithCredentials() {
         CorsConfiguration cors = corsConfigurationSource.getCorsConfiguration(
                 new MockHttpServletRequest("GET", "/api/v1/test")
         );
@@ -89,9 +89,9 @@ class SecurityConfigTest {
         assertThat(cors.getAllowedOrigins()).containsExactly("http://localhost:3000");
         assertThat(cors.getAllowedOrigins()).doesNotContain("*");
         assertThat(cors.getAllowedMethods())
-                .containsExactly("GET", "POST", "PUT", "DELETE", "OPTIONS");
+                .containsExactly("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS");
         assertThat(cors.getAllowedHeaders())
-                .containsExactly("Authorization", "Content-Type");
-        assertThat(cors.getAllowCredentials()).isFalse();
+                .containsExactly("Authorization", "Content-Type", "Accept", "X-CSRF-TOKEN");
+        assertThat(cors.getAllowCredentials()).isTrue();
     }
 }

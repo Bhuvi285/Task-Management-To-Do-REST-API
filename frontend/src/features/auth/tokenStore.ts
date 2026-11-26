@@ -1,12 +1,9 @@
 /**
  * Token storage strategy:
- * - Access token is kept strictly in memory (never written to localStorage/sessionStorage).
- * - Refresh token is stored in sessionStorage ONLY as an explicitly documented interim
- *   compromise for compatibility with the backend's JSON { refreshToken } contract.
- *   It is cleared on logout or refresh failure.
+ * - Access token is kept strictly in memory (never written to localStorage or sessionStorage).
+ * - Refresh token is managed exclusively by the backend via an HttpOnly, SameSite=Lax cookie
+ *   scoped to /api/v1/auth, so JavaScript never reads or stores the refresh token.
  */
-
-const REFRESH_TOKEN_KEY = "taskflow_refresh_token";
 
 let inMemoryAccessToken: string | null = null;
 type AuthClearedListener = () => void;
@@ -21,34 +18,8 @@ export const tokenStore = {
     inMemoryAccessToken = token;
   },
 
-  getRefreshToken(): string | null {
-    try {
-      return window.sessionStorage.getItem(REFRESH_TOKEN_KEY);
-    } catch {
-      return null;
-    }
-  },
-
-  setRefreshToken(token: string | null): void {
-    try {
-      if (token) {
-        window.sessionStorage.setItem(REFRESH_TOKEN_KEY, token);
-      } else {
-        window.sessionStorage.removeItem(REFRESH_TOKEN_KEY);
-      }
-    } catch {
-      // Ignore storage errors in restricted environments
-    }
-  },
-
-  setTokens(accessToken: string, refreshToken: string): void {
-    inMemoryAccessToken = accessToken;
-    this.setRefreshToken(refreshToken);
-  },
-
   clear(): void {
     inMemoryAccessToken = null;
-    this.setRefreshToken(null);
   },
 
   onAuthCleared(listener: AuthClearedListener): () => void {

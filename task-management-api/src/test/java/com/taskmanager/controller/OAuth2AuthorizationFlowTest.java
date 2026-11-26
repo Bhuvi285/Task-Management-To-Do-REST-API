@@ -85,9 +85,11 @@ class OAuth2AuthorizationFlowTest {
                 .session((MockHttpSession) session)
                 .param("code", "test-authorization-code")
                 .param("state", "mismatched-state"))
-            .andExpect(status().isUnauthorized())
-            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
-                .jsonPath("$.message").value("Social authentication failed."))
+            .andExpect(status().is3xxRedirection())
+            .andExpect(header().string(
+                "Location",
+                "http://localhost:3000/auth/login?error=oauth_failed"
+            ))
             .andExpect(header().string("Cache-Control", "no-store"))
             .andExpect(header().string("Pragma", "no-cache"))
             .andExpect(header().doesNotExist("Authorization"))
@@ -111,12 +113,13 @@ class OAuth2AuthorizationFlowTest {
         mockMvc.perform(get("/login/oauth2/code/google")
                 .session(session)
                 .param("code", "test-authorization-code"))
-            .andExpect(status().isUnauthorized())
-            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
-                .jsonPath("$.message").value("Social authentication failed."))
+            .andExpect(status().is3xxRedirection())
+            .andExpect(header().string(
+                "Location",
+                "http://localhost:3000/auth/login?error=oauth_failed"
+            ))
             .andExpect(header().string("Cache-Control", "no-store"))
             .andExpect(header().string("Pragma", "no-cache"))
-            .andExpect(header().doesNotExist("Location"))
             .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.containsString(
                 "JSESSIONID=;"
             )));

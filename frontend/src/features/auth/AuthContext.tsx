@@ -25,9 +25,7 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [isBootstrapping, setIsBootstrapping] = useState<boolean>(() =>
-    Boolean(tokenStore.getRefreshToken()),
-  );
+  const [isBootstrapping, setIsBootstrapping] = useState<boolean>(true);
 
   const clearSession = useCallback(() => {
     tokenStore.clear();
@@ -45,11 +43,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    const existingRefreshToken = tokenStore.getRefreshToken();
-    if (!existingRefreshToken) {
-      return;
-    }
 
+    // Establish session from the HttpOnly refresh cookie (supports OAuth2 redirect & page refresh)
     authService
       .refresh()
       .then((tokens) => {
@@ -74,17 +69,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (credentials: LoginRequest) => {
     const tokens = await authService.login(credentials);
-    tokenStore.setTokens(tokens.accessToken, tokens.refreshToken);
+    tokenStore.setAccessToken(tokens.accessToken);
     const email = extractEmailFromJwt(tokens.accessToken) ?? credentials.email.trim();
     setUser({ email });
   }, []);
 
   const logout = useCallback(async () => {
-    const refreshToken = tokenStore.getRefreshToken();
     try {
-      if (refreshToken) {
-        await authService.logout({ refreshToken });
-      }
+      await authService.logout();
     } catch {
       // Even if server revocation fails (e.g., already expired), always clear local session
     } finally {

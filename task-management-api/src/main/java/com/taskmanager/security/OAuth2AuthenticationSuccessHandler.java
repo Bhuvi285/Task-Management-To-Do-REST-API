@@ -1,6 +1,5 @@
 package com.taskmanager.security;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.taskmanager.dto.auth.LoginResponse;
 import com.taskmanager.entity.User;
 import com.taskmanager.exception.InvalidCredentialsException;
@@ -8,6 +7,8 @@ import com.taskmanager.service.RefreshTokenLifecycleService;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
@@ -15,7 +16,6 @@ import org.springframework.security.web.authentication.AuthenticationSuccessHand
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 
 @Component
 public class OAuth2AuthenticationSuccessHandler implements AuthenticationSuccessHandler {
@@ -23,18 +23,18 @@ public class OAuth2AuthenticationSuccessHandler implements AuthenticationSuccess
     private final RefreshTokenLifecycleService refreshTokenLifecycleService;
     private final OAuth2AuthenticationFailureHandler failureHandler;
     private final OAuth2SessionCleanup sessionCleanup;
-    private final ObjectMapper objectMapper;
+    private final RefreshTokenCookieService refreshTokenCookieService;
 
     public OAuth2AuthenticationSuccessHandler(
         RefreshTokenLifecycleService refreshTokenLifecycleService,
         OAuth2AuthenticationFailureHandler failureHandler,
         OAuth2SessionCleanup sessionCleanup,
-        ObjectMapper objectMapper
+        RefreshTokenCookieService refreshTokenCookieService
     ) {
         this.refreshTokenLifecycleService = refreshTokenLifecycleService;
         this.failureHandler = failureHandler;
         this.sessionCleanup = sessionCleanup;
-        this.objectMapper = objectMapper;
+        this.refreshTokenCookieService = refreshTokenCookieService;
     }
 
     @Override
@@ -71,12 +71,13 @@ public class OAuth2AuthenticationSuccessHandler implements AuthenticationSuccess
         }
 
         sessionCleanup.clear(request, response);
-        response.setStatus(HttpServletResponse.SC_OK);
-        response.setContentType("application/json");
-        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        ResponseCookie refreshCookie = refreshTokenCookieService.createRefreshCookie(
+            loginResponse.refreshToken()
+        );
+        response.addHeader(HttpHeaders.SET_COOKIE, refreshCookie.toString());
         response.setHeader("Cache-Control", "no-store");
         response.setHeader("Pragma", "no-cache");
-        objectMapper.writeValue(response.getOutputStream(), loginResponse);
+        response.sendRedirect(refreshTokenCookieService.getFrontendDashboardUrl());
     }
 
     private void writeFailure(

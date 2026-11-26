@@ -6,6 +6,7 @@ import com.taskmanager.exception.InvalidPasswordResetTokenException;
 import com.taskmanager.exception.PasswordChangeException;
 import com.taskmanager.exception.RateLimitExceededException;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -26,6 +27,36 @@ public class RegistrationExceptionHandler {
 
     private static final Logger LOGGER =
         LoggerFactory.getLogger(RegistrationExceptionHandler.class);
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ApiErrorResponse> handleConstraintViolation(
+        ConstraintViolationException exception,
+        HttpServletRequest request
+    ) {
+        Map<String, String> details = new LinkedHashMap<>();
+        exception.getConstraintViolations().forEach(violation ->
+            details.put(violation.getPropertyPath().toString(), violation.getMessage())
+        );
+        return errorResponse(
+            HttpStatus.BAD_REQUEST,
+            "Request validation failed.",
+            request.getRequestURI(),
+            details
+        );
+    }
+
+    @ExceptionHandler(CsrfOriginValidationException.class)
+    public ResponseEntity<ApiErrorResponse> handleCsrfOriginValidation(
+        CsrfOriginValidationException exception,
+        HttpServletRequest request
+    ) {
+        return errorResponse(
+            HttpStatus.FORBIDDEN,
+            "Origin validation failed for cookie-authenticated request.",
+            request.getRequestURI(),
+            Map.of()
+        );
+    }
 
     @ExceptionHandler(DuplicateEmailException.class)
     public ResponseEntity<ApiErrorResponse> handleDuplicateEmail(
