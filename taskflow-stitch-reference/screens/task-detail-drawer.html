@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="web_dashboard" name="shell-type"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Plus+Jakarta+Sans:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config = { darkMode: "class", theme: { extend: { "colors": { "on-surface": "#dfe2f1", "primary-fixed": "#e1e0ff", "surface-container": "#1c1f2a", "surface-bright": "#353944", "on-secondary-fixed-variant": "#004395", "surface-container-low": "#171b26", "primary-fixed-dim": "#c0c1ff", "secondary-fixed": "#d8e2ff", "on-tertiary-fixed-variant": "#6900b3", "error-container": "#93000a", "on-tertiary": "#490080", "tertiary": "#ddb7ff", "surface-container-lowest": "#0a0e18", "on-primary-fixed": "#07006c", "secondary-fixed-dim": "#adc6ff", "on-error": "#690005", "primary-container": "#8083ff", "on-surface-variant": "#c7c4d7", "surface-tint": "#c0c1ff", "outline": "#908fa0", "tertiary-fixed-dim": "#ddb7ff", "surface": "#0f131d", "secondary": "#adc6ff", "surface-container-high": "#262a35", "on-secondary-fixed": "#001a42", "error": "#ffb4ab", "on-primary": "#1000a9", "outline-variant": "#464554", "inverse-primary": "#494bd6", "surface-dim": "#0f131d", "on-error-container": "#ffdad6", "on-secondary": "#002e6a", "on-tertiary-fixed": "#2c0051", "on-primary-container": "#0d0096", "tertiary-fixed": "#f0dbff", "inverse-on-surface": "#2c303b", "inverse-surface": "#dfe2f1", "on-secondary-container": "#e6ecff", "on-tertiary-container": "#400071", "primary": "#c0c1ff", "surface-container-highest": "#313540", "on-background": "#dfe2f1", "surface-variant": "#313540", "on-primary-fixed-variant": "#2f2ebe", "tertiary-container": "#b76dff", "background": "#0f131d", "secondary-container": "#0566d9" }, "borderRadius": { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" }, "spacing": { "gutter-lg": "2rem", "margin-md": "1.5rem", "gutter": "1rem", "space-xs": "0.25rem", "margin-lg": "2.5rem", "space-xl": "2rem", "space-lg": "1.5rem", "margin": "1rem", "space-sm": "0.5rem", "space-md": "1rem", "gutter-md": "1.5rem" }, "fontFamily": { "headline-sm": [ "Plus Jakarta Sans" ], "display-lg-mobile": [ "Plus Jakarta Sans" ], "body-lg": [ "Inter" ], "headline-lg": [ "Plus Jakarta Sans" ], "body-sm": [ "Inter" ], "label-sm": [ "Inter" ], "code-sm": [ "Inter" ], "display-lg": [ "Plus Jakarta Sans" ], "headline-md": [ "Plus Jakarta Sans" ], "headline-xl-mobile": [ "Plus Jakarta Sans" ], "headline-xl": [ "Plus Jakarta Sans" ], "body-md": [ "Inter" ], "label-md": [ "Inter" ] }, "fontSize": { "headline-sm": [ "18px", { "lineHeight": "24px", "letterSpacing": "-0.01em", "fontWeight": "600" } ], "display-lg-mobile": [ "32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700" } ], "body-lg": [ "16px", { "lineHeight": "24px", "letterSpacing": "-0.005em", "fontWeight": "400" } ], "headline-lg": [ "28px", { "lineHeight": "36px", "letterSpacing": "-0.02em", "fontWeight": "600" } ], "body-sm": [ "12px", { "lineHeight": "16px", "letterSpacing": "0.005em", "fontWeight": "400" } ], "label-sm": [ "11px", { "lineHeight": "14px", "letterSpacing": "0.04em", "fontWeight": "600" } ], "code-sm": [ "12px", { "lineHeight": "16px", "letterSpacing": "0em", "fontWeight": "500" } ], "display-lg": [ "48px", { "lineHeight": "56px", "letterSpacing": "-0.03em", "fontWeight": "700" } ], "headline-md": [ "22px", { "lineHeight": "28px", "letterSpacing": "-0.015em", "fontWeight": "600" } ], "headline-xl-mobile": [ "28px", { "lineHeight": "36px", "letterSpacing": "-0.02em", "fontWeight": "600" } ], "headline-xl": [ "36px", { "lineHeight": "44px", "letterSpacing": "-0.025em", "fontWeight": "600" } ], "body-md": [ "14px", { "lineHeight": "20px", "letterSpacing": "0em", "fontWeight": "400" } ], "label-md": [ "13px", { "lineHeight": "18px", "letterSpacing": "0.01em", "fontWeight": "500" } ] } } } };</script></head><body class="bg-surface font-body-md text-on-surface antialiased"><aside class="fixed left-0 top-0 h-screen w-64 bg-surface-container-low z-50 flex flex-col justify-between overflow-y-auto shadow-[0_1px_8px_rgba(0,0,0,0.04)]"><div class="flex flex-col"><div class="h-16 px-space-md flex items-center gap-space-sm"><img alt="TaskFlow Brand Logo" class="h-8 w-auto object-contain" src="https://lh3.googleusercontent.com/aida/ALJJyrD_JpiexfDV78N5vqec8d8WNKE5mAvoP64dRvKfZQ0DswPlsyMGuV5R-rJn-w9C8NYcjqkoPk31v2VLX8iuLln3cliCNqaW0X9bG4ouvlOElIUwk2jc-w8yc-rj7PccZz61OAUcc1eJ0ztmIq1NlTK_siRVGWDbsZBD9AfEYcFPcXFKzoXvcgW2R2YtGjb8f_xOYuXEJrZ6oQ0snFL18Ka13d2Dk3bc0O6EoVR6FVAPXQ"/><div class="flex flex-col"><div class="flex items-center gap-space-xs"><span class="font-headline-sm text-headline-sm text-on-surface">TaskFlow</span><span class="px-1.5 py-0.5 rounded-full bg-secondary-container text-on-secondary-container font-label-sm text-label-sm uppercase tracking-wide">PRO</span></div></div></div><div class="px-space-md py-space-xs"><button class="w-full flex items-center justify-between px-space-sm py-1.5 rounded-lg bg-surface-container text-on-surface hover:bg-surface-container-high transition-colors" type="button"><div class="flex items-center gap-space-xs truncate"><span class="material-symbols-outlined text-secondary text-base">domain</span><span class="font-label-md text-label-md truncate">Acme Corp / Product...</span></div><span class="material-symbols-outlined text-on-surface-variant text-sm">unfold_more</span></button></div><div class="px-space-md pt-space-md pb-space-xs"><span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Main</span></div><nav class="px-space-sm space-y-1" data-active-classes="bg-primary-container text-on-primary-container font-semibold rounded-lg"><a class="flex items-center justify-between px-space-sm py-2 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="dashboard" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-xl">home</span><span class="font-body-md text-body-md">Dashboard</span></div></a><a class="flex items-center justify-between px-space-sm py-2 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="my-tasks" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-xl">check_circle</span><span class="font-body-md text-body-md">My Tasks</span></div><span class="px-2 py-0.5 rounded-full bg-surface-container-high font-label-sm text-label-sm text-on-surface-variant">14</span></a><a aria-current="page" class="flex items-center justify-between px-space-sm py-2 transition-colors bg-primary-container text-on-primary-container font-semibold rounded-lg" data-path="kanban-board" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-xl">view_kanban</span><span class="font-body-md text-body-md">Kanban Board</span></div></a><a class="flex items-center justify-between px-space-sm py-2 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="calendar" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-xl">calendar_month</span><span class="font-body-md text-body-md">Calendar</span></div><span class="px-2 py-0.5 rounded-full bg-surface-container-high font-label-sm text-label-sm text-on-surface-variant">3</span></a><a class="flex items-center justify-between px-space-sm py-2 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="analytics" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-xl">bar_chart</span><span class="font-body-md text-body-md">Analytics</span></div></a></nav><div class="px-space-md pt-space-lg pb-space-xs flex items-center justify-between"><span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Projects</span><button class="text-on-surface-variant hover:text-on-surface transition-colors" type="button"><span class="material-symbols-outlined text-base">add</span></button></div><div class="px-space-sm space-y-1"><a class="flex items-center gap-space-sm px-space-sm py-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="mobile-app-redesign" href="#"><span class="w-2 h-2 rounded-full bg-primary flex-shrink-0"></span><span class="font-body-md text-body-md truncate">Mobile App Redesign</span></a><a class="flex items-center gap-space-sm px-space-sm py-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="design-system" href="#"><span class="w-2 h-2 rounded-full bg-secondary flex-shrink-0"></span><span class="font-body-md text-body-md truncate">Design System v2.0</span></a><a class="flex items-center gap-space-sm px-space-sm py-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="cloud-infrastructure" href="#"><span class="w-2 h-2 rounded-full bg-secondary-container flex-shrink-0"></span><span class="font-body-md text-body-md truncate">Cloud Infrastructure</span></a><a class="flex items-center gap-space-sm px-space-sm py-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="q3-product-launch" href="#"><span class="w-2 h-2 rounded-full bg-tertiary flex-shrink-0"></span><span class="font-body-md text-body-md truncate">Q3 Product Launch</span></a></div></div><div class="p-space-sm space-y-2"><div class="p-space-sm rounded-xl bg-surface-container space-y-2"><div class="flex items-center justify-between text-on-surface-variant"><span class="font-label-sm text-label-sm">Storage Used</span><span class="font-label-sm text-label-sm text-on-surface">84%</span></div><div class="w-full h-1.5 bg-surface-container-highest rounded-full overflow-hidden"><div class="h-full bg-primary-container rounded-full" style="width: 84%"></div></div><div class="flex items-center justify-between pt-0.5"><span class="font-label-sm text-label-sm text-on-surface-variant">84GB / 100GB</span><a class="font-label-sm text-label-sm text-primary hover:underline" data-path="upgrade-plan" href="#">Upgrade</a></div></div><div class="space-y-1"><a class="flex items-center gap-space-sm px-space-sm py-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="workspace-members" href="#"><span class="material-symbols-outlined text-lg">group_add</span><span class="font-body-md text-body-md">Team Members</span></a><a class="flex items-center gap-space-sm px-space-sm py-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="settings" href="#"><span class="material-symbols-outlined text-lg">settings</span><span class="font-body-md text-body-md">Settings</span></a><a class="flex items-center gap-space-sm px-space-sm py-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="help-documentation" href="#"><span class="material-symbols-outlined text-lg">help</span><span class="font-body-md text-body-md">Help &amp; Docs</span></a></div></div></aside><div class="pl-64"><header class="fixed top-0 left-64 right-0 h-16 bg-surface/80 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.04)] z-40 flex items-center justify-between px-space-lg"><div class="flex-1 max-w-lg"><div class="relative flex items-center"><span class="material-symbols-outlined absolute left-3 text-on-surface-variant text-lg pointer-events-none">search</span><input class="w-full h-9 pl-9 pr-16 bg-surface-container rounded-lg text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:bg-surface-container-high font-body-sm text-body-sm transition-colors" placeholder="Search tasks, projects, docs..." type="text"/><div class="absolute right-2 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-surface-container-high font-code-sm text-code-sm text-on-surface-variant border border-outline-variant/30"><span>⌘</span><span>K</span></div></div></div><div class="flex items-center gap-space-md"><button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-container text-on-primary-container font-label-md text-label-md hover:bg-primary hover:text-on-primary transition-colors shadow-sm" type="button"><span class="material-symbols-outlined text-lg">add</span><span>New Task</span></button><div class="h-5 w-px bg-outline-variant/40"></div><button class="relative p-2 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors" type="button"><span class="material-symbols-outlined text-xl">notifications</span><span class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-error ring-2 ring-surface"></span></button><button class="p-2 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors" type="button"><span class="material-symbols-outlined text-xl">dark_mode</span></button><div class="relative flex items-center cursor-pointer"><img alt="Profile" class="w-8 h-8 rounded-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBUXSOFQNzN7zwKdLu55RKqHTokGiHVmKKYea2VlLPjJvPJ0poW0NU4-1WAc2dG0pS5CHAmKFLXaLRQt9qaWWVGHNtTBD60lJ1q6PWACQ35OgzrT6sQ3wKzEgFvQrQPAAfUjLLz7oR_cIjk0h7pf5tqkORLAuMUg9VsaVqt0ZlcvaUSW43WmAWEoUraS8p3f_T8G1DMqtPH_W68vCHuFWctljDcBRGIGlWqG7v-vAiD"/><span class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-secondary-container ring-2 ring-surface"></span></div></div></header><main class="w-full pt-16 px-space-lg bg-surface min-h-screen"><div class="flex flex-col w-full relative min-h-[calc(100vh-4rem)]">
+<!-- BACKGROUND CONTEXT: High-fidelity active Kanban Board & Sprint metrics -->
+<div class="w-full space-y-gutter pointer-events-none select-none opacity-40 blur-[1px] transition-all duration-300">
+<!-- Top Sprint Control Bar -->
+<div class="flex flex-col md:flex-row md:items-center justify-between gap-space-md pb-space-sm">
+<div class="flex items-center gap-space-md">
+<div class="flex items-center gap-space-xs">
+<span class="font-headline-lg text-headline-lg text-on-surface">Sprint 42: Core Architecture</span>
+<span class="px-2 py-0.5 rounded-full bg-secondary-container/30 text-secondary font-label-sm text-label-sm">Active (5 days left)</span>
+</div>
+</div>
+<div class="flex items-center gap-space-sm">
+<div class="flex items-center bg-surface-container rounded-lg p-1 text-on-surface-variant">
+<button class="px-3 py-1 rounded bg-surface-container-high text-on-surface font-label-md text-label-md flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">view_kanban</span> Board
+          </button>
+<button class="px-3 py-1 font-label-md text-label-md flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">format_list_bulleted</span> List
+          </button>
+</div>
+</div>
+</div>
+<!-- Kanban Grid Background Context -->
+<div class="grid grid-cols-4 gap-gutter w-full">
+<!-- Col 1: Backlog -->
+<div class="flex flex-col gap-space-sm bg-surface-container-low/70 p-space-sm rounded-xl min-h-[640px]">
+<div class="flex items-center justify-between px-space-xs py-1">
+<div class="flex items-center gap-2">
+<span class="w-2.5 h-2.5 rounded-full bg-outline"></span>
+<span class="font-label-md text-label-md text-on-surface uppercase tracking-wider">Backlog</span>
+<span class="px-1.5 py-0.2 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">4</span>
+</div>
+</div>
+<div class="p-space-md rounded-lg bg-surface-container space-y-2 shadow-sm">
+<span class="font-label-sm text-label-sm text-on-surface-variant font-mono">TASK-1089</span>
+<p class="font-body-md text-body-md text-on-surface">Telemetry telemetry pipeline batching optimization</p>
+<div class="flex items-center justify-between pt-1">
+<span class="px-2 py-0.5 rounded bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">Backend</span>
+<span class="font-code-sm text-code-sm text-on-surface-variant">3 pts</span>
+</div>
+</div>
+<div class="p-space-md rounded-lg bg-surface-container space-y-2 shadow-sm">
+<span class="font-label-sm text-label-sm text-on-surface-variant font-mono">TASK-1090</span>
+<p class="font-body-md text-body-md text-on-surface">Audit WCAG 2.1 contrast compliance on tokens</p>
+</div>
+</div>
+<!-- Col 2: In Progress -->
+<div class="flex flex-col gap-space-sm bg-surface-container-low/70 p-space-sm rounded-xl min-h-[640px]">
+<div class="flex items-center justify-between px-space-xs py-1">
+<div class="flex items-center gap-2">
+<span class="w-2.5 h-2.5 rounded-full bg-primary"></span>
+<span class="font-label-md text-label-md text-on-surface uppercase tracking-wider">In Progress</span>
+<span class="px-1.5 py-0.2 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">3</span>
+</div>
+</div>
+<!-- Card Highlighted / Being edited -->
+<div class="p-space-md rounded-lg bg-surface-container-high ring-2 ring-primary/40 space-y-2 shadow-lg">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-label-sm text-primary font-mono">TASK-1082</span>
+<span class="px-2 py-0.5 rounded bg-error-container text-on-error-container font-label-sm text-label-sm">Urgent</span>
+</div>
+<p class="font-headline-sm text-headline-sm text-on-surface">Implement biometric FaceID authentication on iOS</p>
+<div class="flex items-center justify-between pt-2">
+<span class="font-code-sm text-code-sm text-on-surface-variant">60% Done</span>
+<span class="font-code-sm text-code-sm text-primary">5 pts</span>
+</div>
+</div>
+<div class="p-space-md rounded-lg bg-surface-container space-y-2 shadow-sm">
+<span class="font-label-sm text-label-sm text-on-surface-variant font-mono">TASK-1077</span>
+<p class="font-body-md text-body-md text-on-surface">Refactor token cache eviction policy for offline state</p>
+</div>
+</div>
+<!-- Col 3: Review -->
+<div class="flex flex-col gap-space-sm bg-surface-container-low/70 p-space-sm rounded-xl min-h-[640px]">
+<div class="flex items-center justify-between px-space-xs py-1">
+<div class="flex items-center gap-2">
+<span class="w-2.5 h-2.5 rounded-full bg-tertiary"></span>
+<span class="font-label-md text-label-md text-on-surface uppercase tracking-wider">In Review</span>
+<span class="px-1.5 py-0.2 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">2</span>
+</div>
+</div>
+<div class="p-space-md rounded-lg bg-surface-container space-y-2 shadow-sm">
+<span class="font-label-sm text-label-sm text-on-surface-variant font-mono">TASK-1071</span>
+<p class="font-body-md text-body-md text-on-surface">WebSocket heartbeat reconnect edge cases</p>
+</div>
+</div>
+<!-- Col 4: Done -->
+<div class="flex flex-col gap-space-sm bg-surface-container-low/70 p-space-sm rounded-xl min-h-[640px]">
+<div class="flex items-center justify-between px-space-xs py-1">
+<div class="flex items-center gap-2">
+<span class="w-2.5 h-2.5 rounded-full bg-secondary"></span>
+<span class="font-label-md text-label-md text-on-surface uppercase tracking-wider">Done</span>
+<span class="px-1.5 py-0.2 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm">9</span>
+</div>
+</div>
+<div class="p-space-md rounded-lg bg-surface-container space-y-2 shadow-sm opacity-60">
+<span class="font-label-sm text-label-sm text-on-surface-variant font-mono">TASK-1065</span>
+<p class="font-body-md text-body-md text-on-surface line-through">Deep-link schema registration on Universal Links</p>
+</div>
+</div>
+</div>
+</div>
+<!-- BACKDROP OVERLAY with ambient specular gradient -->
+<div class="fixed inset-0 bg-surface-container-lowest/70 backdrop-blur-md z-40 transition-opacity duration-300" id="drawerBackdrop"></div>
+<!-- TASK DETAIL & CREATION SLIDE-OVER DRAWER -->
+<aside class="fixed top-0 right-0 h-screen w-full max-w-[820px] bg-surface-container-low shadow-2xl z-50 flex flex-col justify-between overflow-hidden" id="taskDrawer">
+<!-- 1. DRAWER HEADER -->
+<header class="flex-shrink-0 px-gutter py-space-md bg-surface-container/90 backdrop-blur-md flex flex-col gap-space-sm">
+<div class="flex items-center justify-between">
+<!-- Breadcrumbs Navigation -->
+<nav class="flex items-center gap-1.5 font-label-md text-label-md text-on-surface-variant">
+<span class="hover:text-on-surface cursor-pointer transition-colors">Mobile App Redesign</span>
+<span class="material-symbols-outlined text-xs">chevron_right</span>
+<span class="hover:text-on-surface cursor-pointer transition-colors">Tasks</span>
+<span class="material-symbols-outlined text-xs">chevron_right</span>
+<span class="font-code-sm text-code-sm text-primary px-1.5 py-0.5 rounded bg-surface-container-high">TASK-1082</span>
+</nav>
+<!-- Actions Toolbar -->
+<div class="flex items-center gap-space-xs">
+<button class="p-2 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors" title="Copy shareable link" type="button">
+<span class="material-symbols-outlined text-lg">link</span>
+</button>
+<button class="p-2 rounded-lg text-on-surface-variant hover:text-tertiary hover:bg-surface-container-high transition-colors" title="Favorite task" type="button">
+<span class="material-symbols-outlined text-lg">star</span>
+</button>
+<button class="p-2 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors" title="More options" type="button">
+<span class="material-symbols-outlined text-lg">more_horiz</span>
+</button>
+<div class="h-4 w-px bg-outline-variant/30 mx-1"></div>
+<button class="p-2 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors group" id="closeDrawerBtn" title="Close drawer (Esc)" type="button">
+<span class="material-symbols-outlined text-lg group-hover:rotate-90 transition-transform duration-200">close</span>
+</button>
+</div>
+</div>
+<!-- Status Selection Pill with Transition State -->
+<div class="flex items-center justify-between pt-1">
+<div class="flex items-center gap-space-sm">
+<div class="relative group">
+<button class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-secondary-container/20 text-secondary hover:bg-secondary-container/30 transition-all font-label-md text-label-md" type="button">
+<span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+<span>In Progress</span>
+<span class="material-symbols-outlined text-base">expand_more</span>
+</button>
+</div>
+<span class="material-symbols-outlined text-outline text-sm">trending_flat</span>
+<button class="text-on-surface-variant hover:text-tertiary font-label-sm text-label-sm px-2.5 py-1 rounded-full bg-surface-container hover:bg-surface-container-high transition-colors flex items-center gap-1" type="button">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span> Move to In Review
+          </button>
+</div>
+<div class="flex items-center gap-2">
+<span class="font-label-sm text-label-sm text-on-surface-variant">Created 2d ago by</span>
+<img class="w-5 h-5 rounded-full object-cover" data-alt="Close up photographic portrait of a tech product director with glasses and dark crewneck in a modern minimalist office with soft cinematic lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAbvkHPlJx9sj-jYeUL0qWNi7SiQzbB2ZxCLa5RZovXYIvt6b0t3cu-vQxIEtRfv8sy6LTz12N2D0gsCnHBmva-pgQujlb-fvUiOSErCLMPKmUcgwRzdYDnD53pE-g5aFeLBiwx-IhZkRvEEnbWIjZDSAjqzzNgwLXJuF7rhdD2ePY3xAJjdGNm5jeOdTrbXFu7FMzU641ceduAiYtbV-qmYeDb9QdDoFw-1GDrzSbh"/>
+<span class="font-label-sm text-label-sm text-on-surface">Sarah K.</span>
+</div>
+</div>
+</header>
+<!-- 2. TASK FORM & DETAIL BODY (SCROLLABLE) -->
+<div class="flex-1 overflow-y-auto px-gutter py-space-lg space-y-gutter-lg">
+<!-- Editable Large Display Title -->
+<div class="space-y-1">
+<input class="w-full bg-transparent font-headline-xl text-headline-xl text-on-surface focus:outline-none focus:bg-surface-container/50 px-2 py-1 -mx-2 rounded-lg transition-colors placeholder:text-outline" placeholder="Task title..." type="text" value="Implement biometric FaceID authentication on iOS"/>
+<div class="flex items-center gap-2 px-0.5">
+<span class="font-label-sm text-label-sm text-on-surface-variant font-mono">Branch:</span>
+<span class="font-code-sm text-code-sm text-secondary bg-surface-container px-2 py-0.5 rounded cursor-pointer hover:bg-surface-container-high transition-colors flex items-center gap-1">
+<span class="material-symbols-outlined text-xs">fork_right</span> feature/ios-biometric-faceid
+          </span>
+</div>
+</div>
+<!-- Metadata Properties Bento Grid -->
+<div class="p-space-md rounded-xl bg-surface-container space-y-space-md">
+<div class="grid grid-cols-2 md:grid-cols-4 gap-space-md">
+<!-- Assignee -->
+<div class="space-y-1.5">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider block">Assignee</span>
+<button class="w-full flex items-center gap-2 p-1.5 rounded-lg hover:bg-surface-container-high transition-colors group text-left" type="button">
+<img class="w-6 h-6 rounded-full object-cover" data-alt="Portrait photo of a young male software engineer wearing dark navy sweatshirt in modern high-tech developer setup with ambient neon backlight" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC1or2jpUdy2YZLDG5ChllzmS0Xiwemk3Jq0XeHgYrziXXucBazUCNUvmTSUskQ-VbbLuO8LtXyg1niXBzPvwYc2W38CLKH48Kp_bOHvAczo6G3BP9s5rR_WJkNZuAhUfu6YfCt3eDWdj0LdTaQRcEW9Lq_rjDIwDSR0N7GiKytSdpWtGAFVz564ExKU5MfK6mo5Fle4qUiLBFepRKVZncZXC3J41n8JQuJIxzSX5Sn"/>
+<span class="font-body-md text-body-md text-on-surface truncate group-hover:text-primary transition-colors">Alex Morgan</span>
+</button>
+</div>
+<!-- Priority -->
+<div class="space-y-1.5">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider block">Priority</span>
+<button class="w-full flex items-center gap-1.5 p-1.5 rounded-lg hover:bg-surface-container-high transition-colors group text-left" type="button">
+<span class="material-symbols-outlined text-base text-error" style="font-variation-settings: 'FILL' 1;">flag</span>
+<span class="font-label-md text-label-md text-error px-2 py-0.5 rounded-full bg-error-container/30">Urgent</span>
+</button>
+</div>
+<!-- Due Date -->
+<div class="space-y-1.5">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider block">Due Date</span>
+<button class="w-full flex items-center gap-1.5 p-1.5 rounded-lg hover:bg-surface-container-high transition-colors text-left" type="button">
+<span class="material-symbols-outlined text-base text-tertiary">calendar_today</span>
+<div class="truncate">
+<span class="font-body-md text-body-md text-on-surface block leading-tight">Oct 24, 2024</span>
+<span class="font-label-sm text-label-sm text-tertiary block leading-tight">In 3 days</span>
+</div>
+</button>
+</div>
+<!-- Story Points / Estimation -->
+<div class="space-y-1.5">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider block">Estimation</span>
+<button class="w-full flex items-center gap-2 p-1.5 rounded-lg hover:bg-surface-container-high transition-colors text-left" type="button">
+<span class="material-symbols-outlined text-base text-primary">data_usage</span>
+<span class="font-body-md text-body-md text-on-surface font-semibold">5 Points</span>
+</button>
+</div>
+</div>
+<div class="h-px w-full bg-surface-container-highest"></div>
+<!-- Project & Tags Row -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-space-md items-center">
+<div class="flex items-center gap-space-md">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider min-w-[70px]">Project</span>
+<div class="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-surface-container-high text-on-surface">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<span class="font-label-md text-label-md">Mobile App Redesign</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant font-mono ml-1">#APP-2024</span>
+</div>
+</div>
+<div class="flex items-center gap-space-md">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider min-w-[70px]">Tags</span>
+<div class="flex items-center flex-wrap gap-1.5">
+<span class="px-2 py-0.5 rounded-md bg-surface-container-high text-secondary font-code-sm text-code-sm">iOS</span>
+<span class="px-2 py-0.5 rounded-md bg-surface-container-high text-tertiary font-code-sm text-code-sm">Auth</span>
+<span class="px-2 py-0.5 rounded-md bg-surface-container-high text-primary font-code-sm text-code-sm">Security</span>
+<button class="px-2 py-0.5 rounded-md bg-surface-container-highest text-on-surface-variant hover:text-on-surface hover:bg-surface-bright transition-colors font-label-sm text-label-sm flex items-center gap-1" type="button">
+<span class="material-symbols-outlined text-xs">add</span> Tag
+              </button>
+</div>
+</div>
+</div>
+</div>
+<!-- Description Section & Markdown Toolbar -->
+<div class="space-y-space-sm">
+<div class="flex items-center justify-between">
+<span class="font-label-md text-label-md text-on-surface font-semibold flex items-center gap-1.5">
+<span class="material-symbols-outlined text-base text-primary">subject</span> Description
+          </span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Markdown supported</span>
+</div>
+<div class="rounded-xl bg-surface-container overflow-hidden">
+<!-- Formatting Toolbar -->
+<div class="flex items-center gap-0.5 px-space-sm py-1.5 bg-surface-container-high/60 text-on-surface-variant">
+<button class="p-1.5 rounded hover:bg-surface-bright hover:text-on-surface transition-colors" title="Heading" type="button">
+<span class="font-mono font-bold text-sm">H1</span>
+</button>
+<button class="p-1.5 rounded hover:bg-surface-bright hover:text-on-surface transition-colors" title="Bold" type="button">
+<span class="material-symbols-outlined text-base">format_bold</span>
+</button>
+<button class="p-1.5 rounded hover:bg-surface-bright hover:text-on-surface transition-colors" title="Italic" type="button">
+<span class="material-symbols-outlined text-base">format_italic</span>
+</button>
+<button class="p-1.5 rounded hover:bg-surface-bright hover:text-on-surface transition-colors" title="Inline Code" type="button">
+<span class="material-symbols-outlined text-base">code</span>
+</button>
+<div class="h-4 w-px bg-outline-variant/30 mx-1"></div>
+<button class="p-1.5 rounded hover:bg-surface-bright hover:text-on-surface transition-colors" title="Bulleted List" type="button">
+<span class="material-symbols-outlined text-base">format_list_bulleted</span>
+</button>
+<button class="p-1.5 rounded hover:bg-surface-bright hover:text-on-surface transition-colors" title="Checklist" type="button">
+<span class="material-symbols-outlined text-base">checklist</span>
+</button>
+<button class="p-1.5 rounded hover:bg-surface-bright hover:text-on-surface transition-colors" title="Link" type="button">
+<span class="material-symbols-outlined text-base">link</span>
+</button>
+</div>
+<!-- Formatted Content Body -->
+<div class="p-space-md space-y-space-md text-on-surface font-body-md text-body-md leading-relaxed">
+<p>
+              Integrate hardware biometric authentication utilizing Apple’s native <code class="px-1.5 py-0.5 rounded bg-surface-container-highest text-secondary font-code-sm text-code-sm">LocalAuthentication.framework</code>. This flow will guard sensitive transaction screens and speed up user re-authentication upon session expiration.
+            </p>
+<div class="space-y-1.5 pl-space-md">
+<h4 class="font-headline-sm text-headline-sm text-primary">Core Technical Requirements:</h4>
+<ul class="list-disc list-inside space-y-1 text-on-surface-variant">
+<li>Check biometric enrollment status via <code class="px-1 py-0.5 rounded bg-surface-container-high font-code-sm text-code-sm">canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics)</code>.</li>
+<li>Implement localized fallback prompt triggering the native OS passcode dialog if 3 consecutive scan attempts fail.</li>
+<li>Store refresh tokens securely in iOS Keychain with <code class="px-1 py-0.5 rounded bg-surface-container-high font-code-sm text-code-sm">kSecAccessControlBiometryAny</code> access flags.</li>
+</ul>
+</div>
+<div class="p-space-sm rounded-lg bg-surface-container-lowest/80 flex items-start gap-space-sm text-on-surface-variant font-code-sm text-code-sm">
+<span class="material-symbols-outlined text-secondary text-base mt-0.5">info</span>
+<span>Ensure graceful degradation on simulator builds and devices lacking biometric hardware sensors.</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Subtasks & Acceptance Criteria Checklist -->
+<div class="space-y-space-sm">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-space-sm">
+<span class="font-label-md text-label-md text-on-surface font-semibold flex items-center gap-1.5">
+<span class="material-symbols-outlined text-base text-secondary">checklist</span> Acceptance Criteria &amp; Subtasks
+            </span>
+<span class="px-2 py-0.5 rounded-full bg-surface-container font-label-sm text-label-sm text-primary font-mono">3 / 5 (60%)</span>
+</div>
+</div>
+<!-- Progress Bar -->
+<div class="w-full h-1.5 bg-surface-container-highest rounded-full overflow-hidden">
+<div class="h-full bg-primary-container rounded-full transition-all duration-500" style="width: 60%"></div>
+</div>
+<!-- Checklist Items -->
+<div class="rounded-xl bg-surface-container p-space-sm space-y-1">
+<!-- Item 1: Done -->
+<div class="flex items-center justify-between p-2 rounded-lg hover:bg-surface-container-high transition-colors group">
+<label class="flex items-center gap-3 cursor-pointer flex-1 min-w-0">
+<input checked="" class="w-4 h-4 rounded bg-surface-container-highest text-primary focus:ring-0 cursor-pointer" type="checkbox"/>
+<span class="font-body-md text-body-md text-on-surface-variant line-through truncate">Define LocalAuthentication error handling matrix in Confluence</span>
+</label>
+<div class="flex items-center gap-2">
+<img class="w-5 h-5 rounded-full object-cover" data-alt="Avatar portrait of software quality assurance specialist in black frame glasses against neutral background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAWAj8kMANMMKPj7z9OxRqYVovDkZfO-DVTUtC-zIwPQdEaJxyUPfp4XybM59SqQrTKhfzTRqjr07LDM7tcXU6jB8cKJw9EtjmUhIqqOIkN3lbLrJYl4AdsPJRz2HXzzgQsTY8uRNyb5IzN6rCCLKGmh0mP8aWPykQPiBxtwCgSKsU3SHP5myURDko1nM2gn-slvwXLfTG_mOb53P_uVd0Hrwvz1oYufrGWrZ88KRXg"/>
+<span class="font-label-sm text-label-sm text-on-surface-variant font-mono">TASK-1082-1</span>
+</div>
+</div>
+<!-- Item 2: Done -->
+<div class="flex items-center justify-between p-2 rounded-lg hover:bg-surface-container-high transition-colors group">
+<label class="flex items-center gap-3 cursor-pointer flex-1 min-w-0">
+<input checked="" class="w-4 h-4 rounded bg-surface-container-highest text-primary focus:ring-0 cursor-pointer" type="checkbox"/>
+<span class="font-body-md text-body-md text-on-surface-variant line-through truncate">Request FaceID NSFaceIDUsageDescription copy approval from Legal</span>
+</label>
+<div class="flex items-center gap-2">
+<img class="w-5 h-5 rounded-full object-cover" data-alt="Avatar portrait of compliance lead professional woman in stylish office" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCOkzGf5mDJO80RMx_FQ_he_bJUk0xWfkseuIwCnt4DuhCfClY3epCC1orZ1MtjYhXivCZXLWFQQkOCigRjaZvEqIg3K_XJlRtj5IwGF1iKa6O0Qg5HblsyIOi3FeITFURy2kF0XkNbFyKZSFtWzDix0Ub-qQAM-FJozRVyo0JbmUlnij7-fz_FDrDPn-3lXyZZpIFQI5TMJRUsDggdE9-HCAg7CviSFI1beawZcyNt"/>
+<span class="font-label-sm text-label-sm text-on-surface-variant font-mono">TASK-1082-2</span>
+</div>
+</div>
+<!-- Item 3: Done -->
+<div class="flex items-center justify-between p-2 rounded-lg hover:bg-surface-container-high transition-colors group">
+<label class="flex items-center gap-3 cursor-pointer flex-1 min-w-0">
+<input checked="" class="w-4 h-4 rounded bg-surface-container-highest text-primary focus:ring-0 cursor-pointer" type="checkbox"/>
+<span class="font-body-md text-body-md text-on-surface-variant line-through truncate">Implement BiometricAuthService wrapper class in Swift</span>
+</label>
+<div class="flex items-center gap-2">
+<img class="w-5 h-5 rounded-full object-cover" data-alt="Portrait photo of a young male software engineer wearing dark navy sweatshirt in modern high-tech developer setup with ambient neon backlight" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCCysCA9cOchPn13OjHawOF6W5ca9UNVog4cp0rxaYss-gZI_I2B2ZzGPJyfFBmWFalVo6vW8QHGhsaRMZ4Dil0xb2Gpc0SOVZHAskM2vVLl_0LAIHKmG3m-9uNfwQi_qFLP_UeRkF6Jk8gPtbn_rqolaS4XWf-gfrI8CYtyegezhEO4Y2_lsxPKTDZLi6LDfFznPzI7NE9SkjpJVaVzA0lHUTV6xryygsNpDa_vDaf"/>
+<span class="font-label-sm text-label-sm text-on-surface-variant font-mono">TASK-1082-3</span>
+</div>
+</div>
+<!-- Item 4: Pending -->
+<div class="flex items-center justify-between p-2 rounded-lg hover:bg-surface-container-high transition-colors group">
+<label class="flex items-center gap-3 cursor-pointer flex-1 min-w-0">
+<input class="w-4 h-4 rounded bg-surface-container-highest text-primary focus:ring-0 cursor-pointer" type="checkbox"/>
+<span class="font-body-md text-body-md text-on-surface truncate">Hook UI modal trigger to lock screen dismiss event</span>
+</label>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-outline text-lg">person_add</span>
+</div>
+</div>
+<!-- Item 5: Pending -->
+<div class="flex items-center justify-between p-2 rounded-lg hover:bg-surface-container-high transition-colors group">
+<label class="flex items-center gap-3 cursor-pointer flex-1 min-w-0">
+<input class="w-4 h-4 rounded bg-surface-container-highest text-primary focus:ring-0 cursor-pointer" type="checkbox"/>
+<span class="font-body-md text-body-md text-on-surface truncate">Write unit test suite mocking LAContext evaluation failures</span>
+</label>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-outline text-lg">person_add</span>
+</div>
+</div>
+<!-- Inline Add Subtask Input -->
+<div class="pt-2 px-1">
+<div class="flex items-center gap-2 text-on-surface-variant hover:text-on-surface cursor-pointer p-1.5 rounded-lg hover:bg-surface-container-high transition-colors">
+<span class="material-symbols-outlined text-base text-primary">add</span>
+<input class="bg-transparent text-on-surface placeholder:text-on-surface-variant font-body-sm text-body-sm w-full focus:outline-none" placeholder="Add acceptance criterion or subtask..." type="text"/>
+<kbd class="px-1.5 py-0.5 rounded bg-surface-container-highest font-code-sm text-code-sm text-outline">↵ Enter</kbd>
+</div>
+</div>
+</div>
+</div>
+<!-- Attachments Section -->
+<div class="space-y-space-sm">
+<div class="flex items-center justify-between">
+<span class="font-label-md text-label-md text-on-surface font-semibold flex items-center gap-1.5">
+<span class="material-symbols-outlined text-base text-tertiary">attach_file</span> Attachments
+            <span class="font-normal text-on-surface-variant font-label-sm text-label-sm">(1 file)</span>
+</span>
+<button class="text-primary hover:underline font-label-sm text-label-sm flex items-center gap-1" type="button">
+<span class="material-symbols-outlined text-xs">upload</span> Upload file
+          </button>
+</div>
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-space-sm">
+<div class="flex items-center gap-space-sm p-space-sm rounded-xl bg-surface-container hover:bg-surface-container-high transition-colors group">
+<div class="w-14 h-14 rounded-lg bg-surface-container-highest overflow-hidden flex-shrink-0 flex items-center justify-center relative">
+<img class="w-full h-full object-cover" data-alt="High fidelity mobile UI design mockup screen showing Apple FaceID permission dialog with dark mode slate background and indigo glow elements" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDgWpdExq0Ms2LCS0QOa37Ja-hXb2qPwG8EfDMWfpX0BQpnom4Gdoh_ucSys3VpywXg-jJxPMJvzff8pTyQk4prEcJ5m3JA8vhfCaIwn-LJiR6yV9iW_7qMkj6FAFXs2J4nlPTSmghA5z6l0udw8sL4r9e-SRUSYUrqX9EuxfYM-LjrxihYpJnmynGZFWqT4TP1lUCEhOD-pRwFKDIrr-jeE3mVen0LcfVyHABEWF1Q"/>
+<span class="absolute inset-0 bg-surface-container-lowest/30 group-hover:opacity-0 transition-opacity"></span>
+</div>
+<div class="flex-1 min-w-0">
+<span class="font-label-md text-label-md text-on-surface truncate block font-medium">faceid_modal_specs_v2.png</span>
+<span class="font-body-sm text-body-sm text-on-surface-variant block">1.8 MB • PNG Mockup</span>
+</div>
+<div class="flex items-center gap-1">
+<button class="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-bright transition-colors" title="Download asset" type="button">
+<span class="material-symbols-outlined text-base">download</span>
+</button>
+</div>
+</div>
+<!-- Drag and drop zone card -->
+<div class="flex items-center justify-center gap-2 p-space-sm rounded-xl bg-surface-container/40 hover:bg-surface-container transition-colors cursor-pointer border border-dashed border-outline-variant/40">
+<span class="material-symbols-outlined text-on-surface-variant text-base">add_photo_alternate</span>
+<span class="font-body-sm text-body-sm text-on-surface-variant">Drop images or specs here</span>
+</div>
+</div>
+</div>
+<!-- Activity & Comments Feed -->
+<div class="space-y-space-md pt-space-xs">
+<div class="flex items-center justify-between">
+<span class="font-label-md text-label-md text-on-surface font-semibold flex items-center gap-1.5">
+<span class="material-symbols-outlined text-base text-primary">chat_bubble</span> Activity &amp; Discussion
+          </span>
+<div class="flex items-center gap-1 text-on-surface-variant font-label-sm text-label-sm">
+<span class="text-on-surface font-medium">All</span>
+<span>•</span>
+<span class="hover:text-on-surface cursor-pointer">Comments only</span>
+</div>
+</div>
+<!-- New Comment Input Box -->
+<div class="rounded-xl bg-surface-container p-space-sm space-y-2">
+<div class="flex items-start gap-space-sm">
+<img alt="User avatar" class="w-7 h-7 rounded-full object-cover mt-0.5" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBUXSOFQNzN7zwKdLu55RKqHTokGiHVmKKYea2VlLPjJvPJ0poW0NU4-1WAc2dG0pS5CHAmKFLXaLRQt9qaWWVGHNtTBD60lJ1q6PWACQ35OgzrT6sQ3wKzEgFvQrQPAAfUjLLz7oR_cIjk0h7pf5tqkORLAuMUg9VsaVqt0ZlcvaUSW43WmAWEoUraS8p3f_T8G1DMqtPH_W68vCHuFWctljDcBRGIGlWqG7v-vAiD"/>
+<div class="flex-1">
+<textarea class="w-full bg-transparent text-on-surface placeholder:text-on-surface-variant font-body-sm text-body-sm focus:outline-none resize-none" placeholder="Write a comment or type @ to mention a teammate..." rows="2"></textarea>
+</div>
+</div>
+<div class="flex items-center justify-between pt-1">
+<div class="flex items-center gap-1 text-on-surface-variant">
+<button class="p-1 rounded hover:bg-surface-container-high transition-colors" type="button"><span class="material-symbols-outlined text-sm">alternate_email</span></button>
+<button class="p-1 rounded hover:bg-surface-container-high transition-colors" type="button"><span class="material-symbols-outlined text-sm">sentiment_satisfied</span></button>
+<button class="p-1 rounded hover:bg-surface-container-high transition-colors" type="button"><span class="material-symbols-outlined text-sm">image</span></button>
+</div>
+<button class="px-3 py-1 rounded-lg bg-primary-container text-on-primary-container font-label-md text-label-md hover:bg-primary hover:text-on-primary transition-colors" type="button">
+              Comment
+            </button>
+</div>
+</div>
+<!-- Threaded Comment Feed -->
+<div class="space-y-space-md">
+<!-- Comment 1 -->
+<div class="flex gap-space-sm">
+<img class="w-7 h-7 rounded-full object-cover flex-shrink-0" data-alt="Portrait photo of a young male software engineer wearing dark navy sweatshirt in modern high-tech developer setup with ambient neon backlight" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAdCOQxpNP9pdlyKXi5ECBXws0RpTuvXTeepQCCrKXQuuoJ9DPG_xea0vhl65mOFPqrM7lA_Z4fL8zIZjkDrDPqmIpzqHWITNtZXBPxAjhn07lpREtCxUyy8HkV8twUohFhqmMwGp5z73FcrVMKKh6rx5dinZGue1p1PTbpPMj9Ia5NoGaDHqYbvDHJlWqV6eyLve5LWQxzU-pSPbiiuVe7SToM9cSzLx33EkhvdZn-"/>
+<div class="flex-1 space-y-1">
+<div class="flex items-center gap-2">
+<span class="font-label-md text-label-md text-on-surface font-semibold">Alex Morgan</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Yesterday at 4:18 PM</span>
+</div>
+<div class="p-space-sm rounded-xl bg-surface-container text-on-surface font-body-md text-body-md">
+<p>Checked the keychain access flags with the security team. We will fallback to device PIN seamlessly if biometric sensor access is revoked by the user in iOS Settings.</p>
+</div>
+<div class="flex items-center gap-3 pt-0.5 text-on-surface-variant font-label-sm text-label-sm">
+<button class="hover:text-on-surface transition-colors flex items-center gap-1" type="button">
+<span class="material-symbols-outlined text-xs">add_reaction</span> React
+                </button>
+<button class="hover:text-on-surface transition-colors" type="button">Reply</button>
+</div>
+</div>
+</div>
+<!-- Activity Log Entry -->
+<div class="flex items-center gap-space-sm pl-9 text-on-surface-variant font-body-sm text-body-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+<span>Sarah K. changed status from <strong class="text-on-surface font-medium">To Do</strong> to <strong class="text-secondary font-medium">In Progress</strong></span>
+<span>• 2 days ago</span>
+</div>
+</div>
+</div>
+</div>
+<!-- 3. DRAWER FOOTER (STICKY BOTTOM BAR) -->
+<footer class="flex-shrink-0 px-gutter py-space-md bg-surface-container/95 backdrop-blur-xl flex flex-col sm:flex-row items-center justify-between gap-space-sm">
+<!-- Status & Shortcuts helper -->
+<div class="flex items-center gap-space-md">
+<div class="flex items-center gap-1.5 text-on-surface-variant font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-xs text-secondary animate-spin">sync</span>
+<span>All changes saved to cloud</span>
+</div>
+<div class="hidden md:flex items-center gap-2 text-outline font-code-sm text-code-sm">
+<span><kbd class="px-1 py-0.5 rounded bg-surface-container-high text-on-surface-variant">Esc</kbd> to close</span>
+<span>•</span>
+<span><kbd class="px-1 py-0.5 rounded bg-surface-container-high text-on-surface-variant">⌘ + ↵</kbd> to save</span>
+</div>
+</div>
+<!-- Action CTAs -->
+<div class="flex items-center gap-space-sm w-full sm:w-auto justify-end">
+<button class="px-4 py-2 rounded-lg bg-surface-container-high text-on-surface hover:bg-surface-bright font-label-md text-label-md transition-colors" id="cancelDrawerBtn" type="button">
+          Discard
+        </button>
+<button class="px-5 py-2 rounded-lg bg-primary-container text-on-primary-container hover:bg-primary hover:text-on-primary font-label-md text-label-md transition-all shadow-md hover:shadow-primary/20 flex items-center gap-1.5" id="saveDrawerBtn" type="button">
+<span class="material-symbols-outlined text-base">check</span>
+<span>Save Changes</span>
+</button>
+</div>
+</footer>
+</aside>
+<!-- Lightweight Inline Client-side Micro-interactions -->
+<script>
+    (function initTaskDrawer() {
+      const drawer = document.getElementById('taskDrawer');
+      const backdrop = document.getElementById('drawerBackdrop');
+      const closeBtn = document.getElementById('closeDrawerBtn');
+      const cancelBtn = document.getElementById('cancelDrawerBtn');
+      const saveBtn = document.getElementById('saveDrawerBtn');
+
+      function hideDrawer() {
+        if (!drawer || !backdrop) return;
+        drawer.style.transform = 'translateX(100%)';
+        drawer.style.transition = 'transform 260ms cubic-bezier(0.16, 1, 0.3, 1)';
+        backdrop.style.opacity = '0';
+        backdrop.style.pointerEvents = 'none';
+        backdrop.style.transition = 'opacity 220ms ease-out';
+      }
+
+      function showDrawer() {
+        if (!drawer || !backdrop) return;
+        drawer.style.transform = 'translateX(0%)';
+        drawer.style.transition = 'transform 320ms cubic-bezier(0.16, 1, 0.3, 1)';
+        backdrop.style.opacity = '1';
+        backdrop.style.pointerEvents = 'auto';
+      }
+
+      [closeBtn, cancelBtn, backdrop].forEach(el => {
+        if (el) el.addEventListener('click', hideDrawer);
+      });
+
+      if (saveBtn) {
+        saveBtn.addEventListener('click', () => {
+          saveBtn.classList.add('scale-95');
+          setTimeout(() => {
+            saveBtn.classList.remove('scale-95');
+            hideDrawer();
+          }, 150);
+        });
+      }
+
+      // Keyboard Esc and Cmd+Enter bindings
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          hideDrawer();
+        } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+          if (saveBtn) saveBtn.click();
+        }
+      });
+    })();
+  </script>
+</div></main></div></body></html>
