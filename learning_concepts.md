@@ -14536,3 +14536,32 @@ This concludes Phase 6.6; no subsequent phase is included.
 
 For the complete expanded material, see `Phase_6_6_Learning_Concepts.md`.
 
+## 25. Phase 6.7 — Performance Testing and API Optimization
+
+This phase assessed existing query and connection-pool behavior before changing code. Only two measured improvements were made; API pagination metadata, owner predicates, sorting allowlist, authentication checks, and token behavior remain intact.
+
+### Baseline and findings
+
+- Task listing is database-paginated and every task query is scoped to the authenticated user. `Task.user` is lazy and `TaskResponse` reads scalar task fields, so the list mapping did not show an N+1 relationship fetch.
+- The schema had no index beginning with `tasks.user_id`, despite owner-scoped list and filter queries. An isolated H2 plan over 100,000 synthetic rows showed a table scan for `user_id` filtering and default `createdAt DESC, id ASC` ordering; the candidate composite index changed that plan to use the index. This is query-plan evidence, not a production latency benchmark.
+- Hibernate statistics on a real `MockMvc` request with 25 tasks and a full page measured four prepared statements: JWT user lookup, duplicate `CurrentUserService` user lookup, page select, and count select. The page and count queries preserve the current response and metadata contract.
+- Title search uses a case-insensitive contains pattern with a leading wildcard, which a normal B-tree index generally cannot accelerate. No database-specific text-search infrastructure was added without workload evidence.
+
+### Optimizations and trade-offs
+
+- The JWT principal now carries the user ID already loaded and enabled-checked by the request filter. `CurrentUserService` uses a lazy JPA reference for that principal rather than issuing a second email lookup; other principal types retain the prior lookup fallback. The same integration test now measures three statements for a full page, with the response content and total preserved. This avoids one user query per protected task request; it relies on the request filter's existing database-backed enabled-user check and does not cache authentication across requests.
+- Flyway V3 adds `idx_tasks_user_created_at_id` on `(user_id, created_at DESC, id ASC)`. It supports the common owner-scoped default order and helps locate a user's rows before pagination. The additional index costs storage and adds work to task inserts and relevant updates; no index was added for every optional filter.
+- No changes were made to HikariCP settings, count queries, page size limits, sorting behavior, title-search semantics, or public endpoints.
+
+### Performance testing approach
+
+- `TaskQueryPerformanceIntegrationTest` enables Hibernate statistics and verifies a full HTTP page uses a bounded three prepared statements after optimization, while retaining the expected 10 records and total count. It also checks the V3 index exists in the H2 schema.
+- `task-management-api/performance/k6/task-api.js` is an optional load-test workflow for login, refresh, and task create/list/read/update/delete. It uses a pre-provisioned non-production account, gives each virtual user its own login/refresh-token family, and deletes tasks it creates. Example usage and safe test setup are in `Phase_6_7_Learning_Concepts.md`.
+- No k6 run, production-like load test, response-time comparison, or PostgreSQL verification is claimed. H2 query plans and statement counts do not establish PostgreSQL planner choices or deployment performance.
+
+### Connection-pool review
+
+The existing configurable HikariCP defaults remain `maximumPoolSize=10`, `minimumIdle=2`, `connectionTimeout=30000 ms`, `idleTimeout=600000 ms`, `maxLifetime=1800000 ms`, and `validationTimeout=5000 ms`. A saturated pool makes requests wait up to the acquisition timeout before failing; increasing the pool without matching database capacity can worsen contention. See the expanded learning file for pool sizing, leak detection, load testing, and interview material.
+
+This concludes Phase 6.7. The separate learning document contains the detailed concepts, actual optimization rationale, trade-offs, and testing instructions.
+

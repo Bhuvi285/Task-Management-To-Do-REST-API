@@ -37,5 +37,6 @@ com\taskmanager\repository\OAuthAccountRepositoryTest.class
 com\taskmanager\controller\AuthHardeningIntegrationTest$SecurityProbe.class
 com\taskmanager\service\AuthServiceTest.class
 com\taskmanager\service\SocialAccountServiceTest.class
+com\taskmanager\controller\TaskQueryPerformanceIntegrationTest.class
 com\taskmanager\repository\PostgreSqlIntegrationTest.class
 com\taskmanager\controller\OAuth2AuthorizationFlowTest.class

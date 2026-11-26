@@ -52,6 +52,7 @@ com\taskmanager\exception\RegistrationExceptionHandler.class
 com\taskmanager\exception\TaskExceptionHandler.class
 com\taskmanager\dto\auth\ChangePasswordRequest.class
 com\taskmanager\service\TestService.class
+com\taskmanager\security\TaskManagerUserPrincipal.class
 com\taskmanager\dto\auth\RefreshTokenRequest.class
 com\taskmanager\repository\PasswordResetTokenRepository.class
 com\taskmanager\security\GithubOAuth2UserService.class

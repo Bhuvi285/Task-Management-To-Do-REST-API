@@ -61,6 +61,7 @@ D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\jav
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\OAuth2SessionCleanup.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\PasswordResetTokenDelivery.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\TaskManagerUserDetailsService.java
+D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\TaskManagerUserPrincipal.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\service\AuthService.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\service\CurrentUserService.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\service\JwtService.java
