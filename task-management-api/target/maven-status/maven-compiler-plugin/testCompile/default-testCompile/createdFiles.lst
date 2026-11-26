@@ -12,6 +12,7 @@ com\taskmanager\security\GithubOAuth2UserServiceTest.class
 com\taskmanager\config\OAuth2ClientConfigurationTest.class
 com\taskmanager\security\GoogleOidcUserServiceTest.class
 com\taskmanager\service\JwtServiceTest.class
+com\taskmanager\config\OperationalReadinessIntegrationTest.class
 com\taskmanager\security\OAuth2AuthenticationSuccessHandlerIntegrationTest.class
 com\taskmanager\config\OpenApiDocumentationIntegrationTest.class
 com\taskmanager\service\TaskServiceIntegrationTest.class
@@ -26,6 +27,7 @@ com\taskmanager\repository\PersistenceBehaviorTest.class
 com\taskmanager\service\LoginRateLimiterTest$MutableClock.class
 com\taskmanager\security\GithubEmailClientImplTest.class
 com\taskmanager\service\TaskServiceTest.class
+com\taskmanager\security\SmtpPasswordResetTokenDeliveryTest.class
 com\taskmanager\service\RefreshTokenGeneratorTest.class
 com\taskmanager\config\ProductionConfigurationTest.class
 com\taskmanager\service\TestServiceTest.class

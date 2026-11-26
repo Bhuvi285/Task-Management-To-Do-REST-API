@@ -5,6 +5,8 @@ D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\jav
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\config\OAuth2ClientProperties.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\config\OpenApiConfig.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\config\PasswordConfig.java
+D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\config\PasswordResetEmailConfiguration.java
+D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\config\PasswordResetEmailProperties.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\config\ProductionDatabaseConfigurationValidator.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\config\SecurityConfig.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\controller\AuthController.java
@@ -60,6 +62,7 @@ D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\jav
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\OAuth2AuthenticationSuccessHandler.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\OAuth2SessionCleanup.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\PasswordResetTokenDelivery.java
+D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\SmtpPasswordResetTokenDelivery.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\TaskManagerUserDetailsService.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\security\TaskManagerUserPrincipal.java
 D:\Central Projects Hub\Task Manager Using Java\task-management-api\src\main\java\com\taskmanager\service\AuthService.java
