@@ -91,7 +91,7 @@ class AuthHardeningIntegrationTest {
                 "Access-Control-Allow-Headers",
                 containsString("authorization")
             ))
-            .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"));
+            .andExpect(header().string("Access-Control-Allow-Credentials", "true"));
 
         mockMvc.perform(options(PROTECTED_PATH)
                 .header("Origin", "https://attacker.example")
