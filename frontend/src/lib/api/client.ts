@@ -1,3 +1,4 @@
+
 import axios, { type InternalAxiosRequestConfig } from "axios";
 import { env } from "@/config/env";
 import { normalizeApiError } from "@/lib/api/errors";
@@ -24,6 +25,7 @@ function isPublicAuthRequest(url?: string): boolean {
 
 export const apiClient = axios.create({
   baseURL: env.API_BASE_URL,
+  withCredentials: true,
   headers: {
     "Content-Type": "application/json",
   },
@@ -40,8 +42,8 @@ export async function refreshAccessTokenSingleFlight(): Promise<LoginResponse> {
 
   activeRefreshPromise = (async () => {
     try {
-      // Cookie-based refresh: browser sends the HttpOnly refresh cookie automatically
-      // when withCredentials is true. Bare axios avoids triggering apiClient interceptors.
+      // Cookie-based refresh: browser sends the HttpOnly refresh cookie automatically.
+      // Bare axios avoids triggering apiClient interceptors.
       const response = await axios.post<LoginResponse>(
         `${env.API_BASE_URL}/auth/refresh`,
         undefined,
@@ -51,6 +53,7 @@ export async function refreshAccessTokenSingleFlight(): Promise<LoginResponse> {
           timeout: 15_000,
         },
       );
+
       const data = response.data;
       tokenStore.setAccessToken(data.accessToken);
       return data;
@@ -68,10 +71,12 @@ export async function refreshAccessTokenSingleFlight(): Promise<LoginResponse> {
 apiClient.interceptors.request.use((config) => {
   if (!isPublicAuthRequest(config.url)) {
     const accessToken = tokenStore.getAccessToken();
+
     if (accessToken) {
       config.headers.Authorization = `Bearer ${accessToken}`;
     }
   }
+
   return config;
 });
 
@@ -91,9 +96,12 @@ apiClient.interceptors.response.use(
       !isPublicAuthRequest(originalRequest.url)
     ) {
       originalRequest._retry = true;
+
       try {
         const refreshed = await refreshAccessTokenSingleFlight();
+
         originalRequest.headers.Authorization = `Bearer ${refreshed.accessToken}`;
+
         return apiClient(originalRequest);
       } catch (refreshError) {
         return Promise.reject(normalizeApiError(refreshError));
